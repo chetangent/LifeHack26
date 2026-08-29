@@ -1,4 +1,4 @@
-# AgentShelf
+# AgentShelf by Chetan, Sriram, Justin & Arya
 
 AgentShelf helps brands make products recommendable in AI shopping conversations.
 
