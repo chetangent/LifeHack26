@@ -21,20 +21,40 @@ PacePilot Shift,S$188,Responsive shoe for faster sessions and hot climate traini
 WideWay Start,S$138,Comfortable wide running shoe for walk run beginners,wide toe box|foam ride|textile upper`;
 
 export function Workbench({ initialProducts }: WorkbenchProps) {
+  const initialWeakestProduct = useMemo(
+    () =>
+      [...initialProducts].sort(
+        (left, right) => left.readinessScore - right.readinessScore
+      )[0] ?? null,
+    [initialProducts]
+  );
   const [products, setProducts] = useState(initialProducts);
-  const [selectedId, setSelectedId] = useState(initialProducts[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState(initialWeakestProduct?.id ?? "");
   const [csvText, setCsvText] = useState(sampleCsv);
   const [status, setStatus] = useState("Loaded demo running catalog.");
+  const [optimizedIds, setOptimizedIds] = useState<string[]>([]);
 
   const summary = useMemo(() => summarizeCatalog(products), [products]);
+  const sortedProducts = useMemo(
+    () =>
+      [...products].sort(
+        (left, right) => left.readinessScore - right.readinessScore
+      ),
+    [products]
+  );
   const selectedProduct =
     products.find((product) => product.id === selectedId) ?? products[0] ?? null;
+  const weakestProduct = sortedProducts[0] ?? null;
   const baselinePrompts = selectedProduct
     ? simulatePrompts(selectedProduct, "baseline")
     : [];
   const improvedPrompts = selectedProduct
     ? simulatePrompts(selectedProduct, "improved")
     : [];
+  const isOptimized = selectedProduct
+    ? optimizedIds.includes(selectedProduct.id)
+    : false;
+  const suggestedFixes = selectedProduct ? recommendFixes(selectedProduct) : [];
 
   function handleCsvImport() {
     const rows = parseCatalogCsv(csvText);
@@ -46,9 +66,15 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
 
     startTransition(() => {
       const imported = rows.map(createProductFromRow);
+      const weakestImported = [...imported].sort(
+        (left, right) => left.readinessScore - right.readinessScore
+      )[0];
       setProducts(imported);
-      setSelectedId(imported[0]?.id ?? "");
-      setStatus(`Imported ${imported.length} products and generated AI-ready profiles.`);
+      setSelectedId(weakestImported?.id ?? imported[0]?.id ?? "");
+      setOptimizedIds([]);
+      setStatus(
+        `Imported ${imported.length} products. AgentShelf focused the weakest SKU first so you can improve the biggest content gap.`
+      );
     });
   }
 
@@ -83,14 +109,56 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
     setStatus(`Exported ${selectedProduct.name} as AI-ready JSON.`);
   }
 
+  function handleOptimizeSelected() {
+    if (!selectedProduct) {
+      return;
+    }
+
+    setOptimizedIds((current) =>
+      current.includes(selectedProduct.id)
+        ? current
+        : [...current, selectedProduct.id]
+    );
+    setStatus(
+      `Applied AgentShelf optimizations to ${selectedProduct.name}. Review the AI-ready profile and compare the simulation uplift.`
+    );
+  }
+
+  function handleFocusWeakest() {
+    if (!weakestProduct) {
+      return;
+    }
+
+    setSelectedId(weakestProduct.id);
+    setStatus(
+      `Focused ${weakestProduct.name}, the weakest SKU in this catalog. This is the fastest path to a stronger before-and-after demo.`
+    );
+  }
+
   if (!selectedProduct) {
     return null;
   }
 
   const scoreDelta = selectedProduct.improvedScore - selectedProduct.readinessScore;
+  const simulatedWinDelta =
+    improvedPrompts.filter((prompt) => prompt.matched).length -
+    baselinePrompts.filter((prompt) => prompt.matched).length;
 
   return (
     <>
+      <section className="guidance-banner">
+        <div>
+          <p className="eyebrow">Guided Flow</p>
+          <h2>Upload a catalog, fix the weakest SKU, and prove the lift.</h2>
+        </div>
+        <div className="step-list">
+          <span className="step-chip">1. Ingest</span>
+          <span className="step-chip">2. Diagnose</span>
+          <span className="step-chip">3. Optimize</span>
+          <span className="step-chip">4. Re-test</span>
+        </div>
+      </section>
+
       <section className="summary-strip">
         <article className="summary-card">
           <span>Current average</span>
@@ -108,6 +176,67 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
           <span>Top gap</span>
           <strong>{summary.topGap}</strong>
         </article>
+      </section>
+
+      <section className="studio-grid">
+        <div className="panel selection-panel">
+          <p className="eyebrow">Fastest Win</p>
+          <h2>Start with the weakest SKU</h2>
+          <p className="section-copy">
+            Hackathon demos get stronger when the improvement is obvious. We
+            automatically surface the product with the biggest content gap.
+          </p>
+          <div className="weakest-card">
+            <div>
+              <strong>{weakestProduct?.name}</strong>
+              <span>
+                {weakestProduct?.price} • baseline {weakestProduct?.readinessScore}
+              </span>
+            </div>
+            <button className="primary-button" onClick={handleFocusWeakest} type="button">
+              Focus weakest SKU
+            </button>
+          </div>
+          <div className="insight-block">
+            <h3>What AgentShelf will improve</h3>
+            <ul className="clean">
+              {suggestedFixes.map((fix) => (
+                <li key={fix}>{fix}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="panel selection-panel">
+          <p className="eyebrow">Optimization Copilot</p>
+          <h2>One click to make the product more recommendable</h2>
+          <p className="section-copy">
+            Instead of asking the user to tune the score manually, AgentShelf
+            suggests the missing recommendation signals and applies them to the
+            product profile.
+          </p>
+          <div className="action-row">
+            <button className="primary-button" onClick={handleOptimizeSelected} type="button">
+              Apply suggested fixes
+            </button>
+            <button className="ghost-button" onClick={handleExport} type="button">
+              Export AI-ready JSON
+            </button>
+          </div>
+          <div className="metric-grid">
+            <article className="metric">
+              <strong>+{scoreDelta}</strong>
+              <span>projected score uplift for this SKU</span>
+            </article>
+            <article className="metric">
+              <strong>
+                +{simulatedWinDelta}/{baselinePrompts.length}
+              </strong>
+              <span>prompt wins gained after optimization</span>
+            </article>
+          </div>
+          <p className="status-note">{status}</p>
+        </div>
       </section>
 
       <section className="studio-grid">
@@ -142,9 +271,9 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
 
         <div className="panel selection-panel">
           <p className="eyebrow">Hero SKU</p>
-          <h2>Pick the product you want to win</h2>
+          <h2>Pick the product you want to improve</h2>
           <div className="product-list">
-            {products.map((product) => {
+            {sortedProducts.map((product) => {
               const tone = scoreTone(product.improvedScore);
               const isActive = product.id === selectedProduct.id;
 
@@ -204,38 +333,65 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
               {selectedProduct.improvedScore}
             </span>
           </div>
-          <p className="raw-copy">{selectedProduct.enriched.aiSummary}</p>
-          <div className="chip-list">
-            {selectedProduct.enriched.machineTags.map((tag) => (
-              <span className="chip" key={tag}>
-                {tag}
-              </span>
-            ))}
-          </div>
-          <div className="dual-list">
-            <div className="insight-block">
-              <h3>Personas</h3>
+          {isOptimized ? (
+            <>
+              <p className="raw-copy">{selectedProduct.enriched.aiSummary}</p>
+              <div className="chip-list">
+                {selectedProduct.enriched.machineTags.map((tag) => (
+                  <span className="chip" key={tag}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <div className="dual-list">
+                <div className="insight-block">
+                  <h3>Personas</h3>
+                  <ul className="clean">
+                    {selectedProduct.enriched.personas.map((persona) => (
+                      <li key={persona}>{persona}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="insight-block">
+                  <h3>Use cases</h3>
+                  <ul className="clean">
+                    {selectedProduct.enriched.useCases.map((useCase) => (
+                      <li key={useCase}>{useCase}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className="action-row">
+                <span className="delta-badge">+{scoreDelta} point uplift</span>
+                <button className="ghost-button" onClick={handleExport} type="button">
+                  Export AI-ready JSON
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="placeholder-state">
+              <strong>AI-ready profile is waiting for optimization.</strong>
+              <p>
+                AgentShelf has already detected the missing recommendation
+                signals. Apply the suggested fixes to generate the optimized
+                product profile and unlock the higher score.
+              </p>
               <ul className="clean">
-                {selectedProduct.enriched.personas.map((persona) => (
-                  <li key={persona}>{persona}</li>
+                {suggestedFixes.map((fix) => (
+                  <li key={fix}>{fix}</li>
                 ))}
               </ul>
+              <div className="action-row">
+                <button
+                  className="primary-button"
+                  onClick={handleOptimizeSelected}
+                  type="button"
+                >
+                  Generate optimized profile
+                </button>
+              </div>
             </div>
-            <div className="insight-block">
-              <h3>Use cases</h3>
-              <ul className="clean">
-                {selectedProduct.enriched.useCases.map((useCase) => (
-                  <li key={useCase}>{useCase}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          <div className="action-row">
-            <span className="delta-badge">+{scoreDelta} point uplift</span>
-            <button className="ghost-button" onClick={handleExport} type="button">
-              Export AI-ready JSON
-            </button>
-          </div>
+          )}
         </article>
       </section>
 
@@ -305,7 +461,10 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
             <h3>Improved</h3>
             <div className="prompt-list">
               {improvedPrompts.map((prompt) => (
-                <article className="prompt-row success" key={`improved-${prompt.query}`}>
+                <article
+                  className={`prompt-row success ${isOptimized ? "" : "is-muted"}`}
+                  key={`improved-${prompt.query}`}
+                >
                   <strong>{prompt.query}</strong>
                   <span>
                     {prompt.matched ? "Matched" : "Missed"} at {prompt.confidence}% confidence
@@ -319,4 +478,16 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
       </section>
     </>
   );
+}
+
+function recommendFixes(product: Product) {
+  const fixes = product.gaps.map((gap) => `Add ${gap} so AI can reason about this product.`);
+
+  if (!product.rawDescription.toLowerCase().includes("beginner")) {
+    fixes.push("State the target runner persona explicitly, such as beginner or support-seeking.");
+  }
+
+  fixes.push("Explain why this shoe wins for a specific shopper instead of only listing features.");
+
+  return fixes.slice(0, 4);
 }
