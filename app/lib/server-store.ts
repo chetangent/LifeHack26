@@ -1,25 +1,44 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { products as seedProducts } from "@/data/products";
 import type { OptimizationMeta, OptimizationRun, Product, WorkspaceState } from "@/lib/types";
 
 const dataDirectory = resolve(process.env.AGENTSHELF_DATA_DIR ?? join(process.cwd(), ".agentshelf-data"));
 const workspacePath = join(dataDirectory, "workspace.json");
+const EMPTY_WORKSPACE_STATUS = "No catalog loaded yet. Import a CSV to get started.";
+const LEGACY_SEED_PRODUCT_IDS = new Set(["RS-001", "RS-002", "RS-003", "RS-004", "RS-005", "RS-006"]);
 let lastStorageMode: "supabase" | "local-file" = "local-file";
 
 function createInitialWorkspace(): WorkspaceState {
   return {
     id: "demo-workspace",
     name: "Demo workspace",
-    products: seedProducts,
-    selectedId: seedProducts[0]?.id ?? "",
+    products: [],
     csvText: "",
-    status: "Loaded demo running catalog.",
+    selectedId: "",
+    status: EMPTY_WORKSPACE_STATUS,
     optimizedIds: [],
     optimizationMeta: {},
     optimizationRuns: [],
-    query: "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200.",
+    query: "",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function migrateLegacyDemoWorkspace(workspace: WorkspaceState) {
+  const isLegacySeedCatalog = workspace.products.length === LEGACY_SEED_PRODUCT_IDS.size
+    && workspace.products.every((product) => LEGACY_SEED_PRODUCT_IDS.has(product.id));
+  if (workspace.csvText.trim() || !isLegacySeedCatalog) return workspace;
+  return {
+    ...workspace,
+    products: [],
+    selectedId: "",
+    csvText: "",
+    status: EMPTY_WORKSPACE_STATUS,
+    optimizedIds: [],
+    optimizationMeta: {},
+    optimizationRuns: [],
+    query: "",
     updatedAt: new Date().toISOString()
   };
 }
@@ -40,7 +59,7 @@ async function readLocalWorkspace(): Promise<WorkspaceState> {
   try {
     const contents = await readFile(workspacePath, "utf8");
     const parsed = JSON.parse(contents) as WorkspaceState;
-    if (Array.isArray(parsed.products) && Array.isArray(parsed.optimizedIds)) return parsed;
+    if (Array.isArray(parsed.products) && Array.isArray(parsed.optimizedIds)) return migrateLegacyDemoWorkspace(parsed);
   } catch {
     // A first request creates the local store from the seeded demo workspace.
   }
@@ -83,8 +102,10 @@ async function readWorkspace(): Promise<WorkspaceState> {
     try {
       const remote = await readSupabaseWorkspace();
       if (remote) {
+        const migrated = migrateLegacyDemoWorkspace(remote);
+        if (migrated !== remote) await writeSupabaseWorkspace(migrated);
         lastStorageMode = "supabase";
-        return remote;
+        return migrated;
       }
       const initial = await readLocalWorkspace();
       await writeSupabaseWorkspace(initial);
