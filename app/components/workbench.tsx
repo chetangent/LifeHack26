@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, startTransition, useEffect, useMemo, useState } from "react";
-import type { BenchmarkResult, OptimizationMeta, Product, RankedRecommendation, ShoppingIntent, WorkspaceState } from "@/lib/types";
+import { ChangeEvent, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import type { BenchmarkResult, OptimizationMeta, ParsedCatalogRow, Product, RankedRecommendation, ShoppingIntent, WorkspaceState } from "@/lib/types";
 import {
   buildClaimEvidence,
   exportProductPayload,
+  parseCatalogCsv,
   parseShoppingIntent,
   rankProductsForQuery,
   runBenchmark,
@@ -21,14 +22,14 @@ type WorkbenchProps = {
 };
 
 const sampleCsv = `name,price,description,features
-PulseRoad Breeze,S$168,Breathable daily trainer for beginner runners in humid weather,engineered mesh|foam midsole|rubber outsole
-PacePilot Shift,S$188,Responsive shoe for faster sessions and hot climate training,open mesh|responsive foam|road grip
-WideWay Start,S$138,Comfortable wide running shoe for walk run beginners,wide toe box|foam ride|textile upper`;
+"PulseRoad Breeze","S$168","Breathable daily trainer for beginner runners in humid weather","engineered mesh|foam midsole|rubber outsole"
+"PacePilot Shift","S$188","Responsive shoe for faster sessions and hot climate training","open mesh|responsive foam|road grip"
+"WideWay Start","S$138","Comfortable wide running shoe for walk run beginners","wide toe box|foam ride|textile upper"`;
 
 const sampleCatalogs = [
   { label: "Running shoes", csv: sampleCsv },
-  { label: "Skincare", csv: "name,price,description,features,category\nCalmCurrent Serum,S$42,Gentle barrier serum for sensitive skin and humid daily routines,ceramides|fragrance-free|lightweight texture,Skincare\nSunveil Daily SPF,S$28,Lightweight daily sunscreen for tropical commutes with a non-greasy finish,SPF 50|water resistant|no white cast,Skincare\nNightHarbor Cream,S$58,Rich moisturizer for dry skin and overnight recovery,peptides|shea butter|overnight comfort,Skincare" },
-  { label: "Audio gear", csv: "name,price,description,features,category\nMetroQuiet Buds,S$149,Compact noise cancelling earbuds for daily commutes and travel,active noise cancellation|portable case|long battery,Audio gear\nOpenAir Go,S$99,Lightweight open earbuds for work calls and all-day listening,open fit|clear microphones|comfortable,Audio gear\nStudioArc Pro,S$249,Premium over-ear headphones for focused work and detailed listening,noise cancellation|rich sound|memory foam,Audio gear" }
+  { label: "Skincare", csv: "name,price,description,features,category\nCalmCurrent Serum,S$42,\"Gentle barrier serum for sensitive skin and humid daily routines\",\"ceramides|fragrance-free|lightweight texture\",Skincare\nSunveil Daily SPF,S$28,\"Lightweight daily sunscreen for tropical commutes with a non-greasy finish\",\"SPF 50|water resistant|no white cast\",Skincare\nNightHarbor Cream,S$58,\"Rich moisturizer for dry skin and overnight recovery\",\"peptides|shea butter|overnight comfort\",Skincare" },
+  { label: "Audio gear", csv: "name,price,description,features,category\nMetroQuiet Buds,S$149,\"Compact noise cancelling earbuds for daily commutes and travel\",\"active noise cancellation|portable case|long battery\",Audio gear\nOpenAir Go,S$99,\"Lightweight open earbuds for work calls and all-day listening\",\"open fit|clear microphones|comfortable\",Audio gear\nStudioArc Pro,S$249,\"Premium over-ear headphones for focused work and detailed listening\",\"noise cancellation|rich sound|memory foam\",Audio gear" }
 ] as const;
 
 const EXAMPLE_QUERY = "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200.";
@@ -130,6 +131,7 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   }, [workspaceReady, products, selectedId, csvText, status, optimizedIds, optimizationMeta, query]);
 
   const summary = useMemo(() => summarizeCatalog(products), [products]);
+  const csvPreview = useMemo(() => parseCatalogCsv(csvText), [csvText]);
   const sortedProducts = useMemo(
     () => [...products].sort((left, right) => left.readinessScore - right.readinessScore),
     [products]
@@ -244,11 +246,11 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   }
 
   if (!workspaceReady) {
-    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} /><LoadingWorkspaceState /></div>;
+    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} optimizedIds={optimizedIds} products={products} /><LoadingWorkspaceState /></div>;
   }
 
   if (!selectedProduct && view !== "catalog") {
-    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} /><EmptyCatalogState view={view} /></div>;
+    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} optimizedIds={optimizedIds} products={products} /><EmptyCatalogState view={view} /></div>;
   }
 
   const baselinePrompts = selectedProduct ? simulatePrompts(selectedProduct, "baseline") : [];
@@ -260,11 +262,12 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
 
   return (
     <div className={`workbench workbench-${view}`}>
-      <WorkflowSteps active={view} />
+      <WorkflowSteps active={view} optimizedIds={optimizedIds} products={products} />
       {view === "catalog" ? (
         <>
           <CatalogView
             csvText={csvText}
+            previewRows={csvPreview}
             handleCsvImport={handleCsvImport}
             handleFileUpload={handleFileUpload}
             handleFocusWeakest={handleFocusWeakest}
@@ -283,7 +286,7 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
             summary={summary}
             weakestProduct={weakestProduct}
           />
-          {products.length > 0 ? <><IntentQueryLab products={products} query={query} onQueryChange={setQuery} /><SolutionProof /></> : null}
+          {products.length > 0 ? <CatalogDestinations /> : null}
         </>
       ) : view === "optimize" ? (
         <OptimizeView
@@ -316,22 +319,36 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
             optimizationMeta={optimizationMeta[selectedProduct.id]}
           />
           <IntentQueryLab products={products} query={query} onQueryChange={setQuery} />
-          <SolutionProof />
         </>
       )}
     </div>
   );
 }
 
-function WorkflowSteps({ active }: { active: WorkbenchProps["view"] }) {
+function WorkflowSteps({ active, optimizedIds, products }: { active: WorkbenchProps["view"]; optimizedIds: string[]; products: Product[] }) {
+  const activeIndex = workflowSteps.findIndex((step) => step.id === active);
+  const completion = {
+    catalog: products.length > 0,
+    optimize: optimizedIds.length > 0,
+    evidence: false
+  };
+  const nextAction = active === "catalog"
+    ? products.length > 0 ? "Next: choose a SKU in Optimize." : "Next: import a catalog."
+    : active === "optimize"
+      ? optimizedIds.length > 0 ? "Next: verify the lift in Evidence Lab." : "Next: apply the suggested fixes."
+      : "Next: run a shopper query or export the profile.";
+
   return (
-    <nav className="workflow-steps" aria-label="Workflow steps">
-      {workflowSteps.map((step, index) => (
-        <Link className={active === step.id ? "is-active" : ""} href={step.href} key={step.id}>
-          <span>{String(index + 1).padStart(2, "0")}</span>{step.label}
-        </Link>
-      ))}
-    </nav>
+    <div className="workflow-progress">
+      <div className="workflow-progress-meta"><span>Workflow progress</span><strong>Step {Math.max(activeIndex + 1, 1)} of {workflowSteps.length}</strong></div>
+      <nav className="workflow-steps" aria-label="Workflow steps">
+        {workflowSteps.map((step, index) => {
+          const isComplete = completion[step.id];
+          return <Link aria-current={active === step.id ? "step" : undefined} className={`${active === step.id ? "is-active " : ""}${isComplete ? "is-complete" : ""}`} href={step.href} key={step.id}><span>{isComplete ? "✓" : String(index + 1).padStart(2, "0")}</span>{step.label}</Link>;
+        })}
+      </nav>
+      <p className="workflow-progress-next" aria-live="polite">{nextAction}</p>
+    </div>
   );
 }
 
@@ -342,6 +359,38 @@ function EmptyCatalogState({ view }: { view: "optimize" | "evidence" }) {
 
 function LoadingWorkspaceState() {
   return <section className="panel placeholder-state empty-workspace-state workspace-loading-state" aria-live="polite"><p className="eyebrow">Workspace</p><h2>Loading your catalog.</h2><p>Preparing the latest workspace before showing this step.</p><span className="workspace-loading-bar" aria-hidden="true" /></section>;
+}
+
+function AnimatedScore({ prefix = "", value }: { prefix?: string; value: number }) {
+  const [displayValue, setDisplayValue] = useState(value);
+  const previousValue = useRef(value);
+
+  useEffect(() => {
+    const from = previousValue.current;
+    const to = value;
+    previousValue.current = to;
+    if (from === to) {
+      setDisplayValue(to);
+      return;
+    }
+
+    let frame = 0;
+    const startedAt = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min((now - startedAt) / 620, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(Math.round(from + (to - from) * eased));
+      if (progress < 1) frame = window.requestAnimationFrame(animate);
+    };
+    frame = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frame);
+  }, [value]);
+
+  return <strong className="animated-score" aria-label={`${prefix}${value}`}>{prefix}{displayValue}</strong>;
+}
+
+function CatalogDestinations() {
+  return <section className="catalog-destinations" aria-label="Continue the workflow"><div><p className="eyebrow">Continue the workflow</p><h2>Take the catalog to its next step.</h2><p>Choose a SKU in Optimize, then test shopper intent in Evidence Lab.</p></div><div className="catalog-destination-links"><Link className="catalog-destination" href="/optimize"><strong>Choose another SKU</strong><span>Open Optimize a SKU →</span></Link><Link className="catalog-destination" href="/evidence"><strong>Server-backed intent simulation</strong><span>Open Evidence Lab →</span></Link></div></section>;
 }
 
 type CatalogViewProps = {
@@ -358,6 +407,7 @@ type CatalogViewProps = {
   onRequestClear: () => void;
   onSelectProduct: (id: string) => void;
   products: Product[];
+  previewRows: ParsedCatalogRow[];
   selectedProduct: Product | null;
   showClearConfirmation: boolean;
   status: string;
@@ -365,7 +415,7 @@ type CatalogViewProps = {
   weakestProduct: Product | null;
 };
 
-function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileUpload, handleFocusWeakest, isClearing, onCsvChange, onLoadSample, onResetCsv, onCancelClear, onRequestClear, onSelectProduct, products, selectedProduct, showClearConfirmation, status, summary, weakestProduct }: CatalogViewProps) {
+function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileUpload, handleFocusWeakest, isClearing, onCsvChange, onLoadSample, onResetCsv, onCancelClear, onRequestClear, onSelectProduct, previewRows, products, selectedProduct, showClearConfirmation, status, summary, weakestProduct }: CatalogViewProps) {
   return (
     <>
       <section className="workspace-heading">
@@ -379,6 +429,7 @@ function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileU
           <p className="section-copy">Use a file, or paste a small catalog manually if you are exploring the demo.</p>
           <label className="file-input"><span>Load CSV file</span><input type="file" accept=".csv,text/csv" onChange={handleFileUpload} /></label>
           <details className="inline-details"><summary>Or paste CSV manually</summary><textarea className="csv-input" value={csvText} onChange={(event) => onCsvChange(event.target.value)} placeholder="name,price,description,features\nExample product,S$99,Describe the product here,feature one|feature two" spellCheck={false} /><button className="ghost-button" onClick={onResetCsv} type="button">Clear CSV</button></details>
+          {csvText.trim() ? <CsvPreview rows={previewRows} /> : null}
           <div className="action-row"><button className="primary-button" onClick={handleCsvImport} type="button">Import catalog</button><button className="ghost-button clear-catalog-button" disabled={products.length === 0 || isClearing} onClick={onRequestClear} type="button">Clear catalog</button></div>
           {showClearConfirmation ? <div className="clear-confirmation" role="dialog" aria-labelledby="clear-catalog-title" aria-modal="false"><strong id="clear-catalog-title">Clear this catalog?</strong><p>This will remove the imported products and reset Optimize and Evidence. You can import another catalog afterward.</p><div className="action-row"><button className="ghost-button" disabled={isClearing} onClick={onCancelClear} type="button">No, keep catalog</button><button className="danger-button" disabled={isClearing} onClick={handleClearCatalog} type="button">{isClearing ? "Clearing..." : "Yes, clear catalog"}</button></div></div> : null}
           <p className="status-note">{status}</p>
@@ -395,9 +446,23 @@ function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileU
         </aside>
       </div>
 
-      {products.length > 0 ? <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct?.id} />)}</div></details> : null}
+      {products.length > 0 ? <CatalogCardGrid onSelectProduct={onSelectProduct} products={products} selectedId={selectedProduct?.id ?? ""} /> : null}
+
     </>
   );
+}
+
+function CsvPreview({ rows }: { rows: ParsedCatalogRow[] }) {
+  if (rows.length === 0) {
+    return <div className="csv-preview csv-preview--empty" aria-live="polite"><div className="csv-preview-heading"><div><p className="eyebrow">Live preview</p><strong>Waiting for a valid product row.</strong></div><span>Updates as you type</span></div><p>Include name, price, and description columns to preview the catalog before importing.</p></div>;
+  }
+
+  return <div className="csv-preview" aria-live="polite"><div className="csv-preview-heading"><div><p className="eyebrow">Live preview</p><strong>{rows.length} product{rows.length === 1 ? "" : "s"} detected</strong></div><span>Updates as you type</span></div><div className="csv-preview-table-wrap"><table className="csv-preview-table"><thead><tr><th>Name</th><th>Price</th><th>Description</th><th>Features</th></tr></thead><tbody>{rows.slice(0, 5).map((row) => <tr key={`${row.name}-${row.price}`}><td data-label="Name">{row.name}</td><td data-label="Price">{row.price}</td><td data-label="Description">{row.description}</td><td data-label="Features">{row.features.slice(0, 2).join(" · ") || "Will infer"}</td></tr>)}</tbody></table></div>{rows.length > 5 ? <small>Showing the first 5 rows. All {rows.length} products will be imported.</small> : null}</div>;
+}
+
+function CatalogCardGrid({ onSelectProduct, products, selectedId }: { onSelectProduct: (id: string) => void; products: Product[]; selectedId: string }) {
+  const visibleProducts = products.slice(0, 12);
+  return <section className="catalog-card-section" aria-labelledby="catalog-products-title"><div className="catalog-card-heading"><div><p className="eyebrow">Catalog snapshot</p><h2 id="catalog-products-title">Explore your products.</h2></div><span>{products.length} loaded · click a card to focus</span></div><div className="catalog-card-grid">{visibleProducts.map((product) => <button aria-pressed={product.id === selectedId} className={`catalog-product-card ${product.id === selectedId ? "is-selected" : ""}`} key={product.id} onClick={() => onSelectProduct(product.id)} type="button"><div className="catalog-product-card-top"><span className="eyebrow">{product.category}</span><span>{product.price}</span></div><h3>{product.name}</h3><p>{product.rawDescription}</p><div className="catalog-product-card-score"><span>Readiness</span><AnimatedScore value={product.readinessScore} /></div><div className="progress-track" aria-hidden="true"><span className="progress-bar progress-bar--improved" style={{ width: `${product.readinessScore}%` }} /></div><small>{product.id === selectedId ? "Selected for optimization" : "Select to focus →"}</small></button>)}</div>{products.length > visibleProducts.length ? <details className="secondary-details compact-details"><summary>Browse all products <span>{products.length - visibleProducts.length} more loaded</span></summary><div className="product-list">{products.slice(visibleProducts.length).map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedId} />)}</div></details> : null}</section>;
 }
 
 type ProductListItemProps = { onSelect: (id: string) => void; product: Product; selected: boolean };
@@ -425,8 +490,8 @@ function OptimizeView({ handleExport, handleOptimizeSelected, isOptimized, isOpt
   return (
     <>
       <section className="workspace-heading"><div><p className="eyebrow">Focused step · 02</p><h2>Make one product easier to recommend.</h2><p className="section-copy">AgentShelf has already found the highest-impact fixes for the selected SKU.</p></div><span className="workspace-count">2 of 3</span></section>
-      <div className="selected-product-bar"><div><span className="eyebrow">Selected SKU</span><strong>{selectedProduct.name}</strong><span>{selectedProduct.price} · {selectedProduct.fit} · {selectedProduct.climate}</span></div><div className="score-pair"><div><span>Current</span><strong>{selectedProduct.readinessScore}</strong></div><span aria-hidden="true">→</span><div><span>After fixes</span><strong>{selectedProduct.improvedScore}</strong></div></div></div>
-      <section className="panel optimize-focus-card"><div className="optimization-grid"><div><p className="eyebrow">Recommended path</p><h2>Close the gaps that matter most.</h2><p className="section-copy">These focused changes give AI shoppers enough context to understand when this product is the right fit.</p><ul className="recommendation-list">{suggestedFixes.map((fix) => <li key={fix}>{fix.replace(" so AI can reason about this product.", ".")}</li>)}</ul></div><div className="optimize-score-card"><div className="score-pair-large"><div><span>Current score</span><strong>{selectedProduct.readinessScore}</strong></div><span aria-hidden="true">→</span><div><span>Projected uplift</span><strong>+{scoreDelta}</strong></div></div><button className="primary-button" disabled={isOptimizing} onClick={handleOptimizeSelected} type="button">{isOptimizing ? "Applying fixes..." : isOptimized ? "Apply again" : "Apply suggested fixes"}</button><p className="status-note">{status}</p>{optimizationMeta ? <ProvenanceBadge meta={optimizationMeta} /> : null}</div></div></section>
+      <div className="selected-product-bar"><div><span className="eyebrow">Selected SKU</span><strong>{selectedProduct.name}</strong><span>{selectedProduct.price} · {selectedProduct.fit} · {selectedProduct.climate}</span></div><div className="score-pair"><div><span>Current</span><AnimatedScore value={selectedProduct.readinessScore} /></div><span aria-hidden="true">→</span><div><span>After fixes</span><AnimatedScore value={selectedProduct.improvedScore} /></div></div></div>
+      <section className="panel optimize-focus-card"><div className="optimization-grid"><div><p className="eyebrow">Recommended path</p><h2>Close the gaps that matter most.</h2><p className="section-copy">These focused changes give AI shoppers enough context to understand when this product is the right fit.</p><ul className="recommendation-list">{suggestedFixes.map((fix) => <li key={fix}>{fix.replace(" so AI can reason about this product.", ".")}</li>)}</ul></div><div className="optimize-score-card"><div className="score-pair-large"><div><span>Current score</span><AnimatedScore value={selectedProduct.readinessScore} /></div><span aria-hidden="true">→</span><div><span>Projected uplift</span><AnimatedScore prefix="+" value={scoreDelta} /></div></div><button className="primary-button" disabled={isOptimizing} onClick={handleOptimizeSelected} type="button">{isOptimizing ? "Applying fixes..." : isOptimized ? "Apply again" : "Apply suggested fixes"}</button><p className="status-note">{status}</p>{optimizationMeta ? <ProvenanceBadge meta={optimizationMeta} /> : null}</div></div></section>
       <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct.id} />)}</div></details>
       <details className="secondary-details"><summary>Review the before-and-after content <span>Open only when you need the detail</span></summary><ComparisonPanels handleExport={handleExport} handleOptimizeSelected={handleOptimizeSelected} isOptimized={isOptimized} isOptimizing={isOptimizing} scoreDelta={scoreDelta} selectedProduct={selectedProduct} suggestedFixes={suggestedFixes} /></details>
     </>
@@ -436,7 +501,7 @@ function OptimizeView({ handleExport, handleOptimizeSelected, isOptimized, isOpt
 type ComparisonPanelsProps = { handleExport: () => void; handleOptimizeSelected: () => void; isOptimized: boolean; isOptimizing: boolean; scoreDelta: number; selectedProduct: Product; suggestedFixes: string[] };
 
 function ComparisonPanels({ handleExport, handleOptimizeSelected, isOptimized, isOptimizing, scoreDelta, selectedProduct, suggestedFixes }: ComparisonPanelsProps) {
-  return <div className="case-study-grid detail-grid"><article className="panel"><p className="eyebrow">Before</p><div className="comparison-heading"><h2>Raw catalog content</h2><span className={`score-pill ${scoreTone(selectedProduct.readinessScore).className}`}>{selectedProduct.readinessScore}</span></div><p className="raw-copy">{selectedProduct.rawDescription}</p><ul className="clean">{selectedProduct.rawBullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul><div className="insight-block"><h3>Missing context</h3><ul className="clean">{selectedProduct.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div></article><article className="panel"><p className="eyebrow">After</p><div className="comparison-heading"><h2>AI-ready profile</h2><span className={`score-pill ${scoreTone(selectedProduct.improvedScore).className}`}>{selectedProduct.improvedScore}</span></div>{isOptimized ? <><p className="raw-copy">{selectedProduct.enriched.aiSummary}</p><div className="chip-list">{selectedProduct.enriched.machineTags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}</div><div className="dual-list"><div className="insight-block"><h3>Personas</h3><ul className="clean">{selectedProduct.enriched.personas.map((persona) => <li key={persona}>{persona}</li>)}</ul></div><div className="insight-block"><h3>Use cases</h3><ul className="clean">{selectedProduct.enriched.useCases.map((useCase) => <li key={useCase}>{useCase}</li>)}</ul></div></div><div className="action-row"><span className="delta-badge">+{scoreDelta} point uplift</span><button className="ghost-button" onClick={handleExport} type="button">Export JSON + JSON-LD</button></div><EvidenceTrail product={selectedProduct} /></> : <div className="placeholder-state"><strong>Ready to generate</strong><p>Apply the suggested fixes to create the optimized product profile.</p><button className="primary-button" disabled={isOptimizing} onClick={handleOptimizeSelected} type="button">{isOptimizing ? "Applying fixes..." : "Generate profile"}</button></div>}</article></div>;
+  return <div className="case-study-grid detail-grid"><article className="panel"><p className="eyebrow">Before</p><div className="comparison-heading"><h2>Raw catalog content</h2><span className={`score-pill ${scoreTone(selectedProduct.readinessScore).className}`}><AnimatedScore value={selectedProduct.readinessScore} /></span></div><p className="raw-copy">{selectedProduct.rawDescription}</p><ul className="clean">{selectedProduct.rawBullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul><div className="insight-block"><h3>Missing context</h3><ul className="clean">{selectedProduct.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div></article><article className="panel"><p className="eyebrow">After</p><div className="comparison-heading"><h2>AI-ready profile</h2><span className={`score-pill ${scoreTone(selectedProduct.improvedScore).className}`}><AnimatedScore value={selectedProduct.improvedScore} /></span></div>{isOptimized ? <><p className="raw-copy">{selectedProduct.enriched.aiSummary}</p><div className="chip-list">{selectedProduct.enriched.machineTags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}</div><div className="dual-list"><div className="insight-block"><h3>Personas</h3><ul className="clean">{selectedProduct.enriched.personas.map((persona) => <li key={persona}>{persona}</li>)}</ul></div><div className="insight-block"><h3>Use cases</h3><ul className="clean">{selectedProduct.enriched.useCases.map((useCase) => <li key={useCase}>{useCase}</li>)}</ul></div></div><div className="action-row"><span className="delta-badge">+{scoreDelta} point uplift</span><button className="ghost-button" onClick={handleExport} type="button">Export JSON + JSON-LD</button></div><EvidenceTrail product={selectedProduct} /></> : <div className="placeholder-state"><strong>Ready to generate</strong><p>Apply the suggested fixes to create the optimized product profile.</p><button className="primary-button" disabled={isOptimizing} onClick={handleOptimizeSelected} type="button">{isOptimizing ? "Applying fixes..." : "Generate profile"}</button></div>}</article></div>;
 }
 
 type EvidenceViewProps = { baselinePrompts: ReturnType<typeof simulatePrompts>; handleExport: () => void; handleOptimizeSelected: () => void; improvedPrompts: ReturnType<typeof simulatePrompts>; isOptimized: boolean; onSelectProduct: (id: string) => void; products: Product[]; scoreDelta: number; selectedProduct: Product; simulatedWinDelta: number; status: string; optimizationMeta?: OptimizationMeta };
@@ -446,14 +511,14 @@ function EvidenceView({ baselinePrompts, handleExport, handleOptimizeSelected, i
 
   return <>
     <section className="workspace-heading"><div><p className="eyebrow">Focused step · 03</p><h2>Prove the lift.</h2><p className="section-copy">See the outcome first, then open the evidence behind the score when you need it.</p></div><span className="workspace-count">3 of 3</span></section>
-    <section className="panel evidence-summary-card"><div className="evidence-summary-main"><div><p className="eyebrow">Outcome for {selectedProduct.name}</p><h2>{isOptimized ? "This product is ready for AI answers." : "This product is ready to improve."}</h2><p className="section-copy">{isOptimized ? "The same product now carries the context an AI shopper needs to recommend it confidently." : "Run the optimization step first, then return here to verify the improvement."}</p></div><div className="evidence-metrics"><div><span>Score uplift</span><strong>+{scoreDelta}</strong></div><div><span>Prompt wins</span><strong>+{simulatedWinDelta}/{baselinePrompts.length}</strong></div></div></div>{!isOptimized ? <button className="primary-button" onClick={handleOptimizeSelected} type="button">Optimize this SKU first</button> : <button className="ghost-button" onClick={handleExport} type="button">Export AI-ready JSON</button>}<p className="status-note">{status}</p>{optimizationMeta ? <ProvenanceBadge meta={optimizationMeta} /> : null}</section>
+    <section className="panel evidence-summary-card"><div className="evidence-summary-main"><div><p className="eyebrow">Outcome for {selectedProduct.name}</p><h2>{isOptimized ? "This product is ready for AI answers." : "This product is ready to improve."}</h2><p className="section-copy">{isOptimized ? "The same product now carries the context an AI shopper needs to recommend it confidently." : "Run the optimization step first, then return here to verify the improvement."}</p></div><div className="evidence-metrics"><div><span>Score uplift</span><AnimatedScore prefix="+" value={scoreDelta} /></div><div><span>Prompt wins</span><div className="evidence-metric-value"><AnimatedScore prefix="+" value={simulatedWinDelta} /><span>/{baselinePrompts.length}</span></div></div></div></div>{!isOptimized ? <button className="primary-button" onClick={handleOptimizeSelected} type="button">Optimize this SKU first</button> : <button className="ghost-button" onClick={handleExport} type="button">Export AI-ready JSON</button>}<p className="status-note">{status}</p>{optimizationMeta ? <ProvenanceBadge meta={optimizationMeta} /> : null}</section>
     <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct.id} />)}</div></details>
-    <section className="panel evidence-tabs-card"><div className="evidence-tabs" role="tablist" aria-label="Evidence views">{([["overview", "Before / after"], ["prompts", "Prompt tests"], ["breakdown", "Score breakdown"]] as const).map(([id, label]) => <button aria-selected={activeTab === id} className={activeTab === id ? "is-active" : ""} key={id} onClick={() => setActiveTab(id)} role="tab" type="button">{label}</button>)}</div><div role="tabpanel">{activeTab === "overview" ? <EvidenceOverview isOptimized={isOptimized} selectedProduct={selectedProduct} scoreDelta={scoreDelta} /> : null}{activeTab === "prompts" ? <PromptTests baselinePrompts={baselinePrompts} improvedPrompts={improvedPrompts} isOptimized={isOptimized} /> : null}{activeTab === "breakdown" ? <ScoreBreakdown selectedProduct={selectedProduct} /> : null}</div></section>
+    <section className="panel evidence-tabs-card"><div className="evidence-tabs" role="tablist" aria-label="Evidence views">{([["overview", "Before / after"], ["prompts", "Prompt tests"], ["breakdown", "Score breakdown"]] as const).map(([id, label]) => <button aria-selected={activeTab === id} className={activeTab === id ? "is-active" : ""} key={id} onClick={() => setActiveTab(id)} role="tab" type="button">{label}</button>)}</div><div role="tabpanel">{activeTab === "overview" ? <EvidenceOverview isOptimized={isOptimized} selectedProduct={selectedProduct} scoreDelta={scoreDelta} /> : null}{activeTab === "prompts" ? <PromptTests baselinePrompts={baselinePrompts} improvedPrompts={improvedPrompts} isOptimized={isOptimized} /> : null}{activeTab === "breakdown" ? <ScoreBreakdown selectedProduct={selectedProduct} /> : null}</div>{isOptimized ? <EvidenceTrail product={selectedProduct} /> : <div className="evidence-trail-placeholder"><strong>Claim evidence will unlock after optimization.</strong><span>Apply the suggested fixes to connect generated recommendations back to source fields.</span></div>}</section>
   </>;
 }
 
 function EvidenceOverview({ isOptimized, scoreDelta, selectedProduct }: { isOptimized: boolean; scoreDelta: number; selectedProduct: Product }) {
-  return <div className="evidence-overview"><div className="evidence-result-grid"><article className="evidence-result-card"><span>Current score</span><strong>{selectedProduct.readinessScore}</strong><p>{selectedProduct.rawDescription}</p></article><article className="evidence-result-card is-improved"><span>Improved score</span><strong>{selectedProduct.improvedScore}</strong><p>{isOptimized ? selectedProduct.enriched.aiSummary : "The optimized profile will appear here after the fixes are applied."}</p></article></div><div className="evidence-highlight"><span>What changed</span><strong>{isOptimized ? `+${scoreDelta} points from clearer product context.` : "The recommendation profile is waiting for optimization."}</strong></div></div>;
+  return <div className="evidence-overview"><div className="evidence-result-grid"><article className="evidence-result-card"><span>Current score</span><AnimatedScore value={selectedProduct.readinessScore} /><p>{selectedProduct.rawDescription}</p></article><article className="evidence-result-card is-improved"><span>Improved score</span><AnimatedScore value={selectedProduct.improvedScore} /><p>{isOptimized ? selectedProduct.enriched.aiSummary : "The optimized profile will appear here after the fixes are applied."}</p></article></div><div className="evidence-highlight"><span>What changed</span><strong>{isOptimized ? `+${scoreDelta} points from clearer product context.` : "The recommendation profile is waiting for optimization."}</strong></div></div>;
 }
 
 function PromptTests({ baselinePrompts, improvedPrompts, isOptimized }: { baselinePrompts: ReturnType<typeof simulatePrompts>; improvedPrompts: ReturnType<typeof simulatePrompts>; isOptimized: boolean }) {
@@ -465,7 +530,7 @@ function PromptRow({ improved = false, prompt }: { improved?: boolean; prompt: R
 }
 
 function EvidenceTrail({ product }: { product: Product }) {
-  return <div className="evidence-trail"><div className="evidence-trail-heading"><h3>Claim evidence</h3><span>Review before publishing</span></div>{buildClaimEvidence(product).map((item) => <div className="evidence-trail-row" key={`${item.status}-${item.claim}`}><span className={`evidence-status evidence-status--${item.status}`}>{item.status === "source-backed" ? "Source-backed" : "Generated"}</span><div><strong>{item.claim}</strong><small>{item.source}</small></div></div>)}</div>;
+  return <details className="evidence-trail-details"><summary><span>Claim evidence</span><small>Review before publishing</small></summary><div className="evidence-trail">{buildClaimEvidence(product).map((item) => <div className="evidence-trail-row" key={`${item.status}-${item.claim}`}><span className={`evidence-status evidence-status--${item.status}`}>{item.status === "source-backed" ? "Source-backed" : "Generated"}</span><div><strong>{item.claim}</strong><small>{item.source}</small></div></div>)}</div></details>;
 }
 
 function ScoreBreakdown({ selectedProduct }: { selectedProduct: Product }) {
@@ -526,7 +591,7 @@ function ProvenanceBadge({ meta }: { meta: OptimizationMeta }) {
   return <div className={`provenance-badge${isLive ? " is-live" : ""}`}><span>{isLive ? "Live model" : "Built-in fallback"}</span><small>{isLive ? `${meta.model ?? "OpenAI"} · grounded to source fields` : "Grounded demo logic · no API key required"}</small></div>;
 }
 
-function SolutionProof() {
+export function SolutionProof() {
   const architecture = [
     ["01", "Ingest", "CSV, PIM, or CMS fields"],
     ["02", "Normalize", "Map attributes to a shared schema"],
@@ -534,7 +599,30 @@ function SolutionProof() {
     ["04", "Evaluate", "Score readiness and simulate intent"],
     ["05", "Activate", "Export JSON-LD or send via API"],
   ];
-  return <section className="solution-proof"><div className="solution-proof-heading"><div><p className="eyebrow">From demo to deployment</p><h2>A recommendation layer brands can actually adopt.</h2></div><p>Keep existing catalog systems. Add an AI-ready layer with traceable content, repeatable evaluation, and a clean handoff to the stack you already use.</p></div><div className="architecture-flow">{architecture.map(([number, title, body]) => <div className="architecture-step" key={title}><span>{number}</span><strong>{title}</strong><p>{body}</p></div>)}</div><div className="adoption-grid"><div><span className="eyebrow">Grounded by design</span><strong>Every claim can point back to a source field.</strong><p>Separate source facts from generated narrative so teams can review before publishing.</p></div><div><span className="eyebrow">Built for teams</span><strong>Batch, approve, and activate at catalog scale.</strong><p>Start with CSV export today, then connect PIM, CMS, webhooks, and API delivery without changing the workflow.</p></div><div><span className="eyebrow">Category agnostic</span><strong>One schema, many product stories.</strong><p>Running shoes, skincare, and audio gear can use the same intent-to-evidence loop.</p></div></div></section>;
+
+  useEffect(() => {
+    const target = document.querySelector<HTMLElement>(".solution-proof-heading h2");
+    if (!target) return;
+    let timer: number | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        target.classList.remove("is-scroll-hovering");
+        void target.offsetWidth;
+        target.classList.add("is-scroll-hovering");
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(() => target.classList.remove("is-scroll-hovering"), 900);
+      },
+      { threshold: 0.35 }
+    );
+    observer.observe(target);
+    return () => {
+      observer.disconnect();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
+  return <section className="solution-proof"><div className="solution-proof-heading"><div><p className="eyebrow">From demo to deployment</p><h2 className="scroll-hover-text">A recommendation layer brands can actually adopt.</h2></div><p>Keep existing catalog systems. Add an AI-ready layer with traceable content, repeatable evaluation, and a clean handoff to the stack you already use.</p></div><div className="architecture-flow">{architecture.map(([number, title, body]) => <div className="architecture-step" key={title} tabIndex={0}><span>{number}</span><strong>{title}</strong><p>{body}</p></div>)}</div><div className="adoption-grid"><div tabIndex={0}><span className="eyebrow">Grounded by design</span><strong>Every claim can point back to a source field.</strong><p>Separate source facts from generated narrative so teams can review before publishing.</p></div><div tabIndex={0}><span className="eyebrow">Built for teams</span><strong>Batch, approve, and activate at catalog scale.</strong><p>Start with CSV export today, then connect PIM, CMS, webhooks, and API delivery without changing the workflow.</p></div><div tabIndex={0}><span className="eyebrow">Category agnostic</span><strong>One schema, many product stories.</strong><p>Running shoes, skincare, and audio gear can use the same intent-to-evidence loop.</p></div></div></section>;
 }
 
 function recommendFixes(product: Product) {
