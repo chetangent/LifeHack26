@@ -14,6 +14,33 @@ export type ScenarioResult = {
   reason: string;
 };
 
+export type RankedRecommendation = {
+  product: Product;
+  rankScore: number;
+  matchedSignals: string[];
+  missingSignals: string[];
+  rationale: string;
+};
+
+export type ShoppingIntent = {
+  originalQuery: string;
+  category?: string;
+  budgetMax?: number;
+  signals: string[];
+};
+
+export type BenchmarkResult = {
+  queriesEvaluated: number;
+  averageTopScore: number;
+  strongMatchRate: number;
+};
+
+export type ClaimEvidence = {
+  claim: string;
+  source: string;
+  status: "source-backed" | "generated";
+};
+
 export type EnrichedContent = {
   aiSummary: string;
   personas: string[];
@@ -59,10 +86,35 @@ export type ParsedCatalogRow = {
   price: string;
   description: string;
   features: string[];
+  category?: string;
 };
 
 export type OptimizationMeta = {
   provider: "openai" | "fallback";
   model?: string;
   explanation: string;
+};
+
+export type OptimizationRun = {
+  id: string;
+  productId: string;
+  provider: OptimizationMeta["provider"];
+  model?: string;
+  baselineScore: number;
+  improvedScore: number;
+  createdAt: string;
+};
+
+export type WorkspaceState = {
+  id: string;
+  name: string;
+  products: Product[];
+  selectedId: string;
+  csvText: string;
+  status: string;
+  optimizedIds: string[];
+  optimizationMeta: Record<string, OptimizationMeta>;
+  optimizationRuns: OptimizationRun[];
+  query: string;
+  updatedAt: string;
 };

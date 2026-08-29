@@ -1,6 +1,8 @@
 .DS_Store
+.idea/
 .npm-cache
 work/.npm-cache
 app/node_modules
 app/.next
 app/tsconfig.tsbuildinfo
+.agentshelf-data/

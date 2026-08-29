@@ -121,9 +121,12 @@ That makes the product feel more measurable, more enterprise-ready, and more use
 git clone https://github.com/chetangent/LifeHack26.git
 cd LifeHack26/app
 npm install
-cp .env.example .env.local
 npm run dev
 ```
+
+Before starting the app, create `app/.env.local` and add the environment
+variables for OpenAI and Supabase. Keep the Supabase service-role key and
+OpenAI key server-only.
 
 Open:
 
@@ -131,11 +134,15 @@ Open:
 http://localhost:3000
 ```
 
-To enable live optimization, add your API key in `app/.env.local`:
+For live optimization and persistent workspace data, add these values to
+`app/.env.local`:
 
 ```bash
 OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-5-mini
+OPENAI_MODEL=gpt-4o-mini
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_publishable_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_server_secret_key_here
 ```
 
 If the key is missing or the API call fails, the app falls back to its built-in optimization logic so the demo still works.

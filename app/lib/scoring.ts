@@ -1,11 +1,15 @@
 import type {
+  BenchmarkResult,
+  ClaimEvidence,
   CatalogSummary,
   EnrichedContent,
   OptimizationMeta,
   ParsedCatalogRow,
   Product,
   RecommendationMode,
-  ScenarioResult
+  RankedRecommendation,
+  ScenarioResult,
+  ShoppingIntent
 } from "@/lib/types";
 
 const promptLibrary = [
@@ -13,6 +17,31 @@ const promptLibrary = [
   "I'm training for my first half marathon and need breathable daily trainers.",
   "What's the best value neutral shoe for hot climates?"
 ];
+
+const benchmarkQueries = [
+  { category: "Running shoes", query: "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200." },
+  { category: "Running shoes", query: "I need a supportive option for a beginner under S$180." },
+  { category: "Running shoes", query: "Find a comfortable choice for a humid daily routine." },
+  { category: "Skincare", query: "Find a sustainable skincare routine for sensitive skin under S$60." },
+  { category: "Skincare", query: "I need a lightweight product for a tropical morning commute." },
+  { category: "Audio gear", query: "Show me lightweight noise cancelling audio for commuting under S$160." },
+  { category: "Audio gear", query: "I need comfortable audio for work calls and all-day listening." }
+];
+
+const intentSignalAliases: Record<string, string[]> = {
+  "humid-climate fit": ["humid", "tropical", "hot", "breathable"],
+  "lightweight signal": ["lightweight", "light weight", "mesh", "airy", "portable", "compact"],
+  "long-distance use case": ["half", "long", "distance", "endurance", "marathon"],
+  "beginner-friendly": ["beginner", "new runner", "entry", "first-time", "first"],
+  "support signal": ["stable", "stability", "support"],
+  "wide-fit signal": ["wide"],
+  "comfort signal": ["soft", "comfort", "gentle", "comfortable"],
+  "performance signal": ["responsive", "tempo", "speed", "noise cancelling", "focused"],
+  "sustainable signal": ["sustainable", "recycled", "eco", "responsible"],
+  "sensitive-skin signal": ["sensitive skin", "sensitive", "gentle", "barrier"],
+  "commute signal": ["commute", "commuting", "travel", "portable"],
+  "workday signal": ["work", "calls", "meeting", "all-day"]
+};
 
 export const scoreWeights = [
   { label: "Completeness", weight: 30 },
@@ -32,6 +61,16 @@ export function buildProductInsight(product: Product) {
 }
 
 export function summarizeCatalog(products: Product[]): CatalogSummary {
+  if (products.length === 0) {
+    return {
+      averageScore: 0,
+      improvedAverageScore: 0,
+      highReadinessCount: 0,
+      averageGapCount: 0,
+      topGap: "No gaps",
+      category: "Catalog"
+    };
+  }
   const averageScore = Math.round(
     products.reduce((total, product) => total + product.readinessScore, 0) /
       products.length
@@ -67,7 +106,96 @@ export function summarizeCatalog(products: Product[]): CatalogSummary {
     highReadinessCount,
     averageGapCount,
     topGap,
-    category: "Running shoes"
+    category: [...new Set(products.map((product) => product.category))].join(" · ") || "Catalog"
+  };
+}
+
+export function parseShoppingIntent(query: string): ShoppingIntent {
+  const normalized = query.toLowerCase();
+  const budget = normalized.match(/(?:under|below|less than|max(?:imum)?(?: budget)?(?: of)?)\s*(?:s\$|\$)?\s*(\d+)/)?.[1];
+  const category = /skincare|skin care|serum|cleanser|moisturizer|spf/.test(normalized)
+    ? "Skincare"
+    : /audio|headphone|earbud|speaker|noise cancelling/.test(normalized)
+      ? "Audio gear"
+      : /shoe|trainer|running|marathon|sneaker/.test(normalized)
+        ? "Running shoes"
+        : undefined;
+  const signals = Object.entries(intentSignalAliases)
+    .filter(([, aliases]) => aliases.some((alias) => normalized.includes(alias)))
+    .map(([label]) => label);
+
+  return {
+    originalQuery: query,
+    category,
+    budgetMax: budget ? Number(budget) : undefined,
+    signals
+  };
+}
+
+export function rankProductsForQuery(
+  products: Product[],
+  query: string,
+  mode: RecommendationMode = "improved"
+): RankedRecommendation[] {
+  const intent = parseShoppingIntent(query);
+  const isImproved = mode === "improved";
+
+  return products.map((product) => {
+    const price = Number(product.price.replace(/[^\d.]/g, "")) || 0;
+    const searchText = [
+      product.name,
+      product.category,
+      product.rawDescription,
+      ...product.rawBullets,
+      product.climate,
+      product.fit,
+      product.cushioning,
+      ...(isImproved ? product.enriched.personas : []),
+      ...(isImproved ? product.enriched.useCases : []),
+      ...(isImproved ? product.enriched.recommendationReasons : product.sourceSignals)
+    ].join(" ").toLowerCase();
+    const matchedSignals: string[] = [];
+    const missingSignals: string[] = [];
+
+    if (intent.budgetMax !== undefined) {
+      if (price > 0 && price <= intent.budgetMax) matchedSignals.push(`under S$${intent.budgetMax}`);
+      else missingSignals.push(`over S$${intent.budgetMax}`);
+    }
+    if (intent.category) {
+      if (product.category.toLowerCase() === intent.category.toLowerCase()) matchedSignals.push(`${intent.category} category`);
+      else missingSignals.push(`${intent.category} category`);
+    }
+    intent.signals.forEach((signal) => {
+      const hasSignal = intentSignalAliases[signal].some((alias) => searchText.includes(alias));
+      if (hasSignal) matchedSignals.push(signal);
+      else missingSignals.push(signal);
+    });
+
+    const genericTokens = intent.originalQuery.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 4);
+    const genericMatches = genericTokens.filter((token) => searchText.includes(token));
+    if (genericMatches.length > 0 && matchedSignals.length === 0) {
+      matchedSignals.push(`${genericMatches.length} catalog signal${genericMatches.length === 1 ? "" : "s"}`);
+    }
+
+    const rankScore = clamp(38 + matchedSignals.length * 13 - missingSignals.length * 9 + (isImproved ? 6 : 0), 18, 98);
+    const topSignals = matchedSignals.slice(0, 4);
+    const rationale = topSignals.length > 0
+      ? `${product.name} is ranked on ${topSignals.join(", ")}. ${missingSignals.length > 0 ? `Watch-out: ${missingSignals[0]}.` : "No major query constraint is missing from the current profile."}`
+      : `${product.name} has limited explicit evidence for this query, so the assistant should ask a follow-up question before recommending it.`;
+
+    return { product, rankScore, matchedSignals: topSignals, missingSignals, rationale };
+  }).sort((left, right) => right.rankScore - left.rankScore);
+}
+
+export function runBenchmark(products: Product[]): BenchmarkResult {
+  const categories = new Set(products.map((product) => product.category));
+  const relevantQueries = benchmarkQueries.filter((item) => categories.has(item.category));
+  if (relevantQueries.length === 0) return { queriesEvaluated: 0, averageTopScore: 0, strongMatchRate: 0 };
+  const topScores = relevantQueries.map((item) => rankProductsForQuery(products, item.query)[0]?.rankScore ?? 0);
+  return {
+    queriesEvaluated: relevantQueries.length,
+    averageTopScore: Math.round(topScores.reduce((total, score) => total + score, 0) / topScores.length),
+    strongMatchRate: Math.round((topScores.filter((score) => score >= 70).length / topScores.length) * 100)
   };
 }
 
@@ -131,35 +259,78 @@ export function exportProductPayload(product: Product) {
       bullets: product.rawBullets
     },
     enriched_content: product.enriched,
-    score_breakdown: product.scoreBreakdown
+    score_breakdown: product.scoreBreakdown,
+    json_ld: buildProductJsonLd(product)
   };
 }
 
-export function parseCatalogCsv(input: string): ParsedCatalogRow[] {
-  const lines = input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+export function buildProductJsonLd(product: Product) {
+  const price = product.price.replace(/[^\d.]/g, "");
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    brand: { "@type": "Brand", name: product.brand },
+    category: product.category,
+    description: product.enriched.aiSummary,
+    offers: {
+      "@type": "Offer",
+      price,
+      priceCurrency: "SGD",
+      availability: "https://schema.org/InStock"
+    },
+    additionalProperty: [
+      ...product.enriched.machineTags.map((value) => ({ "@type": "PropertyValue", name: "AI tag", value })),
+      ...product.enriched.personas.map((value) => ({ "@type": "PropertyValue", name: "Audience", value })),
+      ...product.enriched.useCases.map((value) => ({ "@type": "PropertyValue", name: "Use case", value }))
+    ]
+  };
+}
 
-  if (lines.length < 2) {
+export function buildClaimEvidence(product: Product): ClaimEvidence[] {
+  const source = product.rawDescription || product.rawBullets[0] || "Raw catalog input";
+  return [
+    ...product.enriched.proofPoints.slice(0, 3).map((claim) => ({ claim, source, status: "source-backed" as const })),
+    ...product.enriched.recommendationReasons.slice(0, 2).map((claim) => ({ claim, source: "Enriched profile logic", status: "generated" as const }))
+  ];
+}
+
+export function parseCatalogCsv(input: string): ParsedCatalogRow[] {
+  const records = parseCsvRecords(input);
+
+  if (records.length < 2) {
     return [];
   }
 
-  return lines
+  const headers = records[0].map(normalizeCsvHeader);
+  const columnIndex = (aliases: string[], fallback: number) => {
+    const match = aliases
+      .map((alias) => headers.indexOf(alias))
+      .find((index) => index >= 0);
+    return match ?? fallback;
+  };
+  const nameIndex = columnIndex(["name", "product name", "title"], 0);
+  const priceIndex = columnIndex(["price", "product price"], 1);
+  const descriptionIndex = columnIndex(["description", "product description", "details", "summary"], 2);
+  const featuresIndex = columnIndex(["features", "feature", "attributes", "materials"], 3);
+  const categoryIndex = columnIndex(["category", "product category", "department"], 4);
+
+  return records
     .slice(1)
-    .map((row) => splitCsvRow(row))
-    .filter((columns) => columns.length >= 3)
     .map((columns) => ({
-      name: columns[0],
-      price: columns[1],
-      description: columns[2],
-      features: columns[3] ? columns[3].split("|").map((item) => item.trim()).filter(Boolean) : []
-    }));
+      name: columns[nameIndex]?.trim() ?? "",
+      price: columns[priceIndex]?.trim() ?? "",
+      description: columns[descriptionIndex]?.trim() ?? "",
+      features: splitFeatureValue(columns[featuresIndex] ?? ""),
+      category: columns[categoryIndex]?.trim() || undefined
+    }))
+    .filter((row) => Boolean(row.name && row.price && row.description));
 }
 
 export function createProductFromRow(row: ParsedCatalogRow, index: number): Product {
   const description = row.description.toLowerCase();
   const priceValue = Number(row.price.replace(/[^\d.]/g, "")) || 0;
+  const category = row.category?.trim() || inferCategory(`${row.name} ${row.description} ${row.features.join(" ")}`);
   const climate =
     description.includes("humid") || description.includes("breathable")
       ? "humid"
@@ -177,8 +348,8 @@ export function createProductFromRow(row: ParsedCatalogRow, index: number): Prod
     : description.includes("responsive") || description.includes("fast")
       ? "responsive"
       : "moderate";
-  const personas = derivePersonas(description, fit, priceValue);
-  const useCases = deriveUseCases(description, climate);
+  const personas = derivePersonas(description, fit, priceValue, category);
+  const useCases = deriveUseCases(description, climate, category);
   const strengths = deriveStrengths(row.features, description, priceValue);
   const gaps = deriveGaps(description, row.features);
   const readinessScore = clamp(52 + strengths.length * 4 - gaps.length * 5, 42, 80);
@@ -192,7 +363,7 @@ export function createProductFromRow(row: ParsedCatalogRow, index: number): Prod
     climate,
     fit,
     cushioning,
-    category: "Running shoes",
+    category,
     rawDescription: row.description,
     rawBullets: row.features,
     sourceSignals: strengths.slice(0, 3),
@@ -229,7 +400,7 @@ export function createProductFromRow(row: ParsedCatalogRow, index: number): Prod
       }
     ],
     enriched: {
-      aiSummary: `${capitalize(cushioning)} ${fit} running shoe for ${useCases[0]} with ${climate}-climate positioning at ${row.price}.`,
+      aiSummary: buildAiSummary(category, cushioning, fit, personas, useCases, row.price, row.description),
       personas,
       useCases,
       strengths,
@@ -259,7 +430,8 @@ export function buildFallbackProductFromProduct(product: Product): Product {
       name: product.name,
       price: product.price,
       description: product.rawDescription,
-      features: product.rawBullets
+      features: product.rawBullets,
+      category: product.category
     },
     0
   );
@@ -322,8 +494,16 @@ export function buildOptimizationMeta(
   return { provider, explanation, model };
 }
 
-function derivePersonas(description: string, fit: string, priceValue: number) {
+function derivePersonas(description: string, fit: string, priceValue: number, category: string) {
   const personas = [];
+
+  if (!category.toLowerCase().includes("running") && !category.toLowerCase().includes("shoe")) {
+    if (description.includes("beginner") || description.includes("daily") || description.includes("easy")) personas.push("first-time buyer");
+    if (description.includes("sensitive") || description.includes("gentle")) personas.push("careful chooser");
+    if (description.includes("commute") || description.includes("portable")) personas.push("on-the-go shopper");
+    if (priceValue <= 180) personas.push("value shopper");
+    return unique(personas.length > 0 ? personas : ["practical shopper", "research-led buyer"]);
+  }
 
   if (description.includes("beginner") || description.includes("daily")) {
     personas.push("beginner runner");
@@ -450,8 +630,16 @@ function sanitizeList(values: string[] | undefined, fallback: string[]) {
   ).slice(0, 6);
 }
 
-function deriveUseCases(description: string, climate: string) {
+function deriveUseCases(description: string, climate: string, category: string) {
   const useCases = [];
+
+  if (!category.toLowerCase().includes("running") && !category.toLowerCase().includes("shoe")) {
+    if (description.includes("commute") || description.includes("travel")) useCases.push("commuting and travel");
+    if (description.includes("sensitive") || description.includes("gentle")) useCases.push("sensitive-skin routines");
+    if (description.includes("work") || description.includes("meeting")) useCases.push("workday use");
+    useCases.push(description.includes("daily") ? "daily use" : "considered purchase");
+    return unique(useCases);
+  }
 
   if (description.includes("half marathon") || description.includes("long")) {
     useCases.push("half-marathon prep");
@@ -533,6 +721,21 @@ function deriveTradeoffs(fit: string, cushioning: string, priceValue: number) {
   return unique(tradeoffs);
 }
 
+function inferCategory(text: string) {
+  const normalized = text.toLowerCase();
+  if (/shoe|trainer|running|sneaker|mesh upper/.test(normalized)) return "Running shoes";
+  if (/skin|serum|cleanser|moistur|spf|cream/.test(normalized)) return "Skincare";
+  if (/headphone|earbud|speaker|audio|noise cancel/.test(normalized)) return "Audio gear";
+  return "General merchandise";
+}
+
+function buildAiSummary(category: string, cushioning: string, fit: string, personas: string[], useCases: string[], price: string, description: string) {
+  if (category.toLowerCase().includes("running") || category.toLowerCase().includes("shoe")) {
+    return `${capitalize(cushioning)} ${fit} running shoe for ${useCases[0]} at ${price}, shaped for ${personas[0]}.`;
+  }
+  return `${category} for ${personas[0]}, positioned for ${useCases[0]} at ${price}. Source description: ${description}`;
+}
+
 function buildWinReason(product: Product, query: string, mode: RecommendationMode) {
   if (mode === "improved") {
     return `${product.name} matches ${query.toLowerCase().includes("humid") ? "climate" : "intent"} because the enriched profile includes explicit personas, use cases, and recommendation logic.`;
@@ -549,29 +752,63 @@ function buildLossReason(product: Product, query: string, mode: RecommendationMo
   return `${product.name} improved, but still needs ${product.enriched.missingSignals[0] ?? "stronger evidence"} to win more confidently.`;
 }
 
-function splitCsvRow(row: string) {
-  const result: string[] = [];
+function parseCsvRecords(input: string) {
+  const records: string[][] = [];
+  const source = input.replace(/^\uFEFF/, "");
+  let record: string[] = [];
   let current = "";
   let inQuotes = false;
 
-  for (const char of row) {
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && source[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
       continue;
     }
 
     if (char === "," && !inQuotes) {
-      result.push(current.trim());
+      record.push(current.trim());
       current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && source[index + 1] === "\n") index += 1;
+      record.push(current.trim());
+      current = "";
+      if (record.some(Boolean)) records.push(record);
+      record = [];
       continue;
     }
 
     current += char;
   }
 
-  result.push(current.trim());
+  if (inQuotes) return [];
 
-  return result;
+  if (current.length > 0 || record.length > 0) {
+    record.push(current.trim());
+    if (record.some(Boolean)) records.push(record);
+  }
+
+  return records;
+}
+
+function normalizeCsvHeader(value: string) {
+  return value.toLowerCase().replace(/[\s_-]+/g, " ").trim();
+}
+
+function splitFeatureValue(value: string) {
+  return value
+    .split(/\s*[|;]\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function unique(values: string[]) {
