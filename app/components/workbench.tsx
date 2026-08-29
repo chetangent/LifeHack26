@@ -283,7 +283,7 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
             summary={summary}
             weakestProduct={weakestProduct}
           />
-          {products.length > 0 ? <><IntentQueryLab products={products} query={query} onQueryChange={setQuery} /><SolutionProof /></> : null}
+          {products.length > 0 ? <CatalogDestinations /> : null}
         </>
       ) : view === "optimize" ? (
         <OptimizeView
@@ -316,7 +316,6 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
             optimizationMeta={optimizationMeta[selectedProduct.id]}
           />
           <IntentQueryLab products={products} query={query} onQueryChange={setQuery} />
-          <SolutionProof />
         </>
       )}
     </div>
@@ -342,6 +341,10 @@ function EmptyCatalogState({ view }: { view: "optimize" | "evidence" }) {
 
 function LoadingWorkspaceState() {
   return <section className="panel placeholder-state empty-workspace-state workspace-loading-state" aria-live="polite"><p className="eyebrow">Workspace</p><h2>Loading your catalog.</h2><p>Preparing the latest workspace before showing this step.</p><span className="workspace-loading-bar" aria-hidden="true" /></section>;
+}
+
+function CatalogDestinations() {
+  return <section className="catalog-destinations" aria-label="Continue the workflow"><div><p className="eyebrow">Continue the workflow</p><h2>Take the catalog to its next step.</h2><p>Choose a SKU in Optimize, then test shopper intent in Evidence Lab.</p></div><div className="catalog-destination-links"><Link className="catalog-destination" href="/optimize"><strong>Choose another SKU</strong><span>Open Optimize a SKU →</span></Link><Link className="catalog-destination" href="/evidence"><strong>Server-backed intent simulation</strong><span>Open Evidence Lab →</span></Link></div></section>;
 }
 
 type CatalogViewProps = {
@@ -395,7 +398,6 @@ function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileU
         </aside>
       </div>
 
-      {products.length > 0 ? <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct?.id} />)}</div></details> : null}
     </>
   );
 }
@@ -526,7 +528,7 @@ function ProvenanceBadge({ meta }: { meta: OptimizationMeta }) {
   return <div className={`provenance-badge${isLive ? " is-live" : ""}`}><span>{isLive ? "Live model" : "Built-in fallback"}</span><small>{isLive ? `${meta.model ?? "OpenAI"} · grounded to source fields` : "Grounded demo logic · no API key required"}</small></div>;
 }
 
-function SolutionProof() {
+export function SolutionProof() {
   const architecture = [
     ["01", "Ingest", "CSV, PIM, or CMS fields"],
     ["02", "Normalize", "Map attributes to a shared schema"],
@@ -534,7 +536,30 @@ function SolutionProof() {
     ["04", "Evaluate", "Score readiness and simulate intent"],
     ["05", "Activate", "Export JSON-LD or send via API"],
   ];
-  return <section className="solution-proof"><div className="solution-proof-heading"><div><p className="eyebrow">From demo to deployment</p><h2>A recommendation layer brands can actually adopt.</h2></div><p>Keep existing catalog systems. Add an AI-ready layer with traceable content, repeatable evaluation, and a clean handoff to the stack you already use.</p></div><div className="architecture-flow">{architecture.map(([number, title, body]) => <div className="architecture-step" key={title}><span>{number}</span><strong>{title}</strong><p>{body}</p></div>)}</div><div className="adoption-grid"><div><span className="eyebrow">Grounded by design</span><strong>Every claim can point back to a source field.</strong><p>Separate source facts from generated narrative so teams can review before publishing.</p></div><div><span className="eyebrow">Built for teams</span><strong>Batch, approve, and activate at catalog scale.</strong><p>Start with CSV export today, then connect PIM, CMS, webhooks, and API delivery without changing the workflow.</p></div><div><span className="eyebrow">Category agnostic</span><strong>One schema, many product stories.</strong><p>Running shoes, skincare, and audio gear can use the same intent-to-evidence loop.</p></div></div></section>;
+
+  useEffect(() => {
+    const target = document.querySelector<HTMLElement>(".solution-proof-heading h2");
+    if (!target) return;
+    let timer: number | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        target.classList.remove("is-scroll-hovering");
+        void target.offsetWidth;
+        target.classList.add("is-scroll-hovering");
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(() => target.classList.remove("is-scroll-hovering"), 900);
+      },
+      { threshold: 0.35 }
+    );
+    observer.observe(target);
+    return () => {
+      observer.disconnect();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
+  return <section className="solution-proof"><div className="solution-proof-heading"><div><p className="eyebrow">From demo to deployment</p><h2 className="scroll-hover-text">A recommendation layer brands can actually adopt.</h2></div><p>Keep existing catalog systems. Add an AI-ready layer with traceable content, repeatable evaluation, and a clean handoff to the stack you already use.</p></div><div className="architecture-flow">{architecture.map(([number, title, body]) => <div className="architecture-step" key={title} tabIndex={0}><span>{number}</span><strong>{title}</strong><p>{body}</p></div>)}</div><div className="adoption-grid"><div tabIndex={0}><span className="eyebrow">Grounded by design</span><strong>Every claim can point back to a source field.</strong><p>Separate source facts from generated narrative so teams can review before publishing.</p></div><div tabIndex={0}><span className="eyebrow">Built for teams</span><strong>Batch, approve, and activate at catalog scale.</strong><p>Start with CSV export today, then connect PIM, CMS, webhooks, and API delivery without changing the workflow.</p></div><div tabIndex={0}><span className="eyebrow">Category agnostic</span><strong>One schema, many product stories.</strong><p>Running shoes, skincare, and audio gear can use the same intent-to-evidence loop.</p></div></div></section>;
 }
 
 function recommendFixes(product: Product) {

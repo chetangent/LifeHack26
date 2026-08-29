@@ -586,12 +586,14 @@ body {
 .story-hero h1 { max-width: 8ch; margin: 0; font-size: clamp(4rem, 11vw, 9rem); line-height: .87; letter-spacing: -.075em; font-weight: 600; }
 .landing-page .story-hero-copy h1,
 .landing-page .story-step h2,
+.landing-page .solution-proof-heading h2,
 .landing-page .landing-cta h2 {
   will-change: transform;
   transition: transform 240ms cubic-bezier(.2, .8, .2, 1), text-shadow 240ms ease;
 }
 .landing-page .story-hero-copy h1:hover,
 .landing-page .story-step h2:hover,
+.landing-page .solution-proof-heading h2:hover,
 .landing-page .landing-cta h2:hover {
   transform: translate3d(4px, -3px, 0);
   text-shadow: 3px 5px 0 rgba(207, 92, 54, .1);
@@ -1466,6 +1468,66 @@ ul.clean {
   animation: workspace-loading 1.1s ease-in-out infinite;
 }
 
+.catalog-destinations {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+  gap: 24px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(255, 250, 243, 0.72);
+}
+
+.catalog-destinations h2 {
+  max-width: 14ch;
+  margin: 0 0 10px;
+  font-size: clamp(1.8rem, 3vw, 3rem);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+}
+
+.catalog-destinations p:not(.eyebrow) {
+  max-width: 28rem;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.catalog-destination-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.catalog-destination {
+  display: flex;
+  min-height: 116px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: inherit;
+  background: rgba(255, 253, 249, 0.9);
+  text-decoration: none;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.catalog-destination:hover,
+.catalog-destination:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(207, 92, 54, 0.4);
+  box-shadow: 0 12px 24px rgba(63, 42, 30, 0.08);
+}
+
+.catalog-destination span {
+  color: var(--accent);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 @keyframes workspace-loading {
   from { transform: translateX(-110%); }
   to { transform: translateX(250%); }
@@ -1571,6 +1633,13 @@ ul.clean {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+
+  .architecture-step:hover,
+  .architecture-step:focus-visible,
+  .adoption-grid > div:hover,
+  .adoption-grid > div:focus-visible {
+    transform: none;
+  }
 }
 
 @media (max-width: 920px) {
@@ -1580,7 +1649,8 @@ ul.clean {
   .focus-grid,
   .optimization-grid,
   .evidence-summary-main,
-  .evidence-result-grid {
+  .evidence-result-grid,
+  .catalog-destinations {
     grid-template-columns: 1fr;
   }
 
@@ -1635,6 +1705,7 @@ ul.clean {
   .focus-product { align-items: flex-start; flex-direction: column; }
   .evidence-tabs { overflow-x: auto; }
   .evidence-tabs button { flex: 0 0 auto; white-space: nowrap; }
+  .catalog-destination-links { grid-template-columns: 1fr; }
   .evidence-highlight { align-items: flex-start; flex-direction: column; }
   .evidence-highlight strong { text-align: left; }
   .story-progress { width: 100%; margin: 0 0 20px; overflow-x: auto; justify-content: flex-start; }
@@ -1968,9 +2039,20 @@ ul.clean {
 }
 
 .architecture-step {
+  position: relative;
   min-height: 150px;
   padding: 18px;
   background: rgba(255, 250, 243, .78);
+  transition: transform 220ms ease, background 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.architecture-step:hover,
+.architecture-step:focus-visible {
+  z-index: 1;
+  transform: translateY(-6px) scale(1.02);
+  outline: none;
+  background: rgba(255, 253, 249, .98);
+  box-shadow: 0 14px 26px rgba(63, 42, 30, .12);
 }
 
 .architecture-step > span {
@@ -2004,10 +2086,21 @@ ul.clean {
 }
 
 .adoption-grid > div {
+  position: relative;
   padding: 20px;
   border: 1px solid var(--line);
   border-radius: 20px;
   background: rgba(255, 250, 243, .64);
+  transition: transform 220ms ease, background 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.adoption-grid > div:hover,
+.adoption-grid > div:focus-visible {
+  transform: translateY(-6px);
+  outline: none;
+  border-color: rgba(207, 92, 54, .38);
+  background: rgba(255, 253, 249, .96);
+  box-shadow: 0 14px 26px rgba(63, 42, 30, .1);
 }
 
 .adoption-grid .eyebrow {
