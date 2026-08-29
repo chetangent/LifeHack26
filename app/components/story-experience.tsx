@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type PointerEvent } from "react";
 import type { Product } from "@/lib/types";
 
 const steps = [
@@ -13,6 +13,9 @@ const steps = [
 
 export function StoryExperience({ product }: { product: Product }) {
   const [activeStep, setActiveStep] = useState("import");
+  const [logoTilt, setLogoTilt] = useState({ x: 0, y: 0 });
+  const [logoLight, setLogoLight] = useState({ x: 50, y: 30 });
+  const [logoActive, setLogoActive] = useState(false);
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
   const score = activeStep === "import" || activeStep === "diagnose" ? product.readinessScore : product.improvedScore;
 
@@ -31,13 +34,48 @@ export function StoryExperience({ product }: { product: Product }) {
     setActiveStep(id);
   }
 
+  function handleLogoPointerMove(event: PointerEvent<HTMLButtonElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2;
+    const y = ((event.clientY - bounds.top) / bounds.height - 0.5) * 2;
+    setLogoTilt({ x: Number((y * -7).toFixed(2)), y: Number((x * 9).toFixed(2)) });
+    setLogoLight({
+      x: Number((((event.clientX - bounds.left) / bounds.width) * 100).toFixed(1)),
+      y: Number((((event.clientY - bounds.top) / bounds.height) * 100).toFixed(1))
+    });
+  }
+
+  function resetLogoTilt() {
+    setLogoTilt({ x: 0, y: 0 });
+    setLogoLight({ x: 50, y: 30 });
+  }
+
   return (
     <div className="story-page">
       <section className="story-hero">
-        <p className="eyebrow">The AI commerce layer</p>
-        <h1>Products deserve better answers.</h1>
-        <p>AgentShelf turns the static catalog into a living product story—structured for the way AI assistants actually help people shop.</p>
-        <button className="story-scroll-button" onClick={() => jumpTo("import")} type="button">Scroll to explore <span>↓</span></button>
+        <div className="story-hero-copy">
+          <p className="eyebrow">The AI commerce layer</p>
+          <h1>Products deserve better answers.</h1>
+          <p>AgentShelf turns the static catalog into a living product story—structured for the way AI assistants actually help people shop.</p>
+        </div>
+        <button
+          aria-pressed={logoActive}
+          aria-label="Interact with the AgentShelf 3D logo"
+          className={`story-logo${logoActive ? " is-active" : ""}`}
+          onClick={() => setLogoActive((current) => !current)}
+          onPointerLeave={resetLogoTilt}
+          onPointerMove={handleLogoPointerMove}
+          style={{
+            "--logo-tilt-x": `${logoTilt.x}deg`,
+            "--logo-tilt-y": `${logoTilt.y}deg`,
+            "--logo-light-x": `${logoLight.x}%`,
+            "--logo-light-y": `${logoLight.y}%`
+          } as CSSProperties}
+          type="button"
+        >
+          <span className="story-logo-glow" aria-hidden="true" />
+          <img src="/brand/agentshelf-3d-logo.png" alt="" />
+        </button>
       </section>
 
       <div className="story-progress" aria-label="Story progress">

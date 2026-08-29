@@ -5,7 +5,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="app-layout">
       <header className="topbar">
         <Link className="brand" href="/">
-          <span className="brand-mark">A</span>
           <span>AgentShelf</span>
         </Link>
         <nav className="topbar-nav" aria-label="Primary navigation">
