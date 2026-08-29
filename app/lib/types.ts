@@ -14,6 +14,33 @@ export type ScenarioResult = {
   reason: string;
 };
 
+export type RankedRecommendation = {
+  product: Product;
+  rankScore: number;
+  matchedSignals: string[];
+  missingSignals: string[];
+  rationale: string;
+};
+
+export type ShoppingIntent = {
+  originalQuery: string;
+  category?: string;
+  budgetMax?: number;
+  signals: string[];
+};
+
+export type BenchmarkResult = {
+  queriesEvaluated: number;
+  averageTopScore: number;
+  strongMatchRate: number;
+};
+
+export type ClaimEvidence = {
+  claim: string;
+  source: string;
+  status: "source-backed" | "generated";
+};
+
 export type EnrichedContent = {
   aiSummary: string;
   personas: string[];
@@ -59,6 +86,7 @@ export type ParsedCatalogRow = {
   price: string;
   description: string;
   features: string[];
+  category?: string;
 };
 
 export type OptimizationMeta = {
