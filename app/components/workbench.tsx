@@ -219,7 +219,15 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
         </article>
       </section>
 
-      <section className="studio-grid">
+      <div className="section-heading overview-heading">
+        <div>
+          <p className="eyebrow">Catalog overview</p>
+          <h2>Find the next product worth fixing.</h2>
+        </div>
+        <p className="section-copy">Your weakest SKU is already selected below. Start there for the clearest lift.</p>
+      </div>
+
+      <section className="studio-grid active-workspace">
         <div className="panel selection-panel">
           <p className="eyebrow">Fastest Win</p>
           <h2>Start with the weakest SKU</h2>
@@ -291,6 +299,8 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
         </div>
       </section>
 
+      <details className="secondary-details">
+        <summary>Catalog setup <span>Upload a new CSV or choose another SKU</span></summary>
       <section className="studio-grid">
         <div className="panel import-panel">
           <p className="eyebrow">Catalog Input</p>
@@ -351,6 +361,7 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
           </div>
         </div>
       </section>
+      </details>
 
       <section className="case-study-grid">
         <article className="panel">
@@ -448,6 +459,8 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
         </article>
       </section>
 
+      <details className="secondary-details evidence-details">
+        <summary>Evidence & explainability <span>See score breakdown and recommendation simulations</span></summary>
       <section className="panel score-panel">
         <p className="eyebrow">Readiness Engine</p>
         <div className="section-heading compact">
@@ -540,6 +553,7 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
           </div>
         </div>
       </section>
+      </details>
     </>
   );
 }

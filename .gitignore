@@ -1,4 +1,5 @@
 .DS_Store
+.idea/
 .npm-cache
 work/.npm-cache
 app/node_modules
