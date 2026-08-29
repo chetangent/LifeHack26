@@ -296,26 +296,35 @@ export function buildClaimEvidence(product: Product): ClaimEvidence[] {
 }
 
 export function parseCatalogCsv(input: string): ParsedCatalogRow[] {
-  const lines = input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const records = parseCsvRecords(input);
 
-  if (lines.length < 2) {
+  if (records.length < 2) {
     return [];
   }
 
-  return lines
+  const headers = records[0].map(normalizeCsvHeader);
+  const columnIndex = (aliases: string[], fallback: number) => {
+    const match = aliases
+      .map((alias) => headers.indexOf(alias))
+      .find((index) => index >= 0);
+    return match ?? fallback;
+  };
+  const nameIndex = columnIndex(["name", "product name", "title"], 0);
+  const priceIndex = columnIndex(["price", "product price"], 1);
+  const descriptionIndex = columnIndex(["description", "product description", "details", "summary"], 2);
+  const featuresIndex = columnIndex(["features", "feature", "attributes", "materials"], 3);
+  const categoryIndex = columnIndex(["category", "product category", "department"], 4);
+
+  return records
     .slice(1)
-    .map((row) => splitCsvRow(row))
-    .filter((columns) => columns.length >= 3)
     .map((columns) => ({
-      name: columns[0],
-      price: columns[1],
-      description: columns[2],
-      features: columns[3] ? columns[3].split("|").map((item) => item.trim()).filter(Boolean) : [],
-      category: columns[4] || undefined
-    }));
+      name: columns[nameIndex]?.trim() ?? "",
+      price: columns[priceIndex]?.trim() ?? "",
+      description: columns[descriptionIndex]?.trim() ?? "",
+      features: splitFeatureValue(columns[featuresIndex] ?? ""),
+      category: columns[categoryIndex]?.trim() || undefined
+    }))
+    .filter((row) => Boolean(row.name && row.price && row.description));
 }
 
 export function createProductFromRow(row: ParsedCatalogRow, index: number): Product {
@@ -743,29 +752,63 @@ function buildLossReason(product: Product, query: string, mode: RecommendationMo
   return `${product.name} improved, but still needs ${product.enriched.missingSignals[0] ?? "stronger evidence"} to win more confidently.`;
 }
 
-function splitCsvRow(row: string) {
-  const result: string[] = [];
+function parseCsvRecords(input: string) {
+  const records: string[][] = [];
+  const source = input.replace(/^\uFEFF/, "");
+  let record: string[] = [];
   let current = "";
   let inQuotes = false;
 
-  for (const char of row) {
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && source[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
       continue;
     }
 
     if (char === "," && !inQuotes) {
-      result.push(current.trim());
+      record.push(current.trim());
       current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && source[index + 1] === "\n") index += 1;
+      record.push(current.trim());
+      current = "";
+      if (record.some(Boolean)) records.push(record);
+      record = [];
       continue;
     }
 
     current += char;
   }
 
-  result.push(current.trim());
+  if (inQuotes) return [];
 
-  return result;
+  if (current.length > 0 || record.length > 0) {
+    record.push(current.trim());
+    if (record.some(Boolean)) records.push(record);
+  }
+
+  return records;
+}
+
+function normalizeCsvHeader(value: string) {
+  return value.toLowerCase().replace(/[\s_-]+/g, " ").trim();
+}
+
+function splitFeatureValue(value: string) {
+  return value
+    .split(/\s*[|;]\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function unique(values: string[]) {

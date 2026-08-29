@@ -94,3 +94,27 @@ export type OptimizationMeta = {
   model?: string;
   explanation: string;
 };
+
+export type OptimizationRun = {
+  id: string;
+  productId: string;
+  provider: OptimizationMeta["provider"];
+  model?: string;
+  baselineScore: number;
+  improvedScore: number;
+  createdAt: string;
+};
+
+export type WorkspaceState = {
+  id: string;
+  name: string;
+  products: Product[];
+  selectedId: string;
+  csvText: string;
+  status: string;
+  optimizedIds: string[];
+  optimizationMeta: Record<string, OptimizationMeta>;
+  optimizationRuns: OptimizationRun[];
+  query: string;
+  updatedAt: string;
+};

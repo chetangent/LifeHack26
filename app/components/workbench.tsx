@@ -2,13 +2,11 @@
 
 import Link from "next/link";
 import { ChangeEvent, startTransition, useEffect, useMemo, useState } from "react";
-import type { OptimizationMeta, Product, RankedRecommendation } from "@/lib/types";
+import type { BenchmarkResult, OptimizationMeta, Product, RankedRecommendation, ShoppingIntent, WorkspaceState } from "@/lib/types";
 import {
   buildClaimEvidence,
-  createProductFromRow,
   exportProductPayload,
   parseShoppingIntent,
-  parseCatalogCsv,
   rankProductsForQuery,
   runBenchmark,
   scoreTone,
@@ -34,7 +32,6 @@ const sampleCatalogs = [
 ] as const;
 
 const DEFAULT_QUERY = "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200.";
-const WORKSPACE_STORAGE_KEY = "agentshelf-workspace-v2";
 
 const workflowSteps = [
   { id: "catalog", label: "Import", href: "/catalog" },
@@ -58,44 +55,46 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   const [workspaceReady, setWorkspaceReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<{
-          products: Product[];
-          selectedId: string;
-          csvText: string;
-          status: string;
-          optimizedIds: string[];
-          optimizationMeta: Record<string, OptimizationMeta>;
-          query: string;
-        }>;
-        if (Array.isArray(parsed.products) && parsed.products.length > 0) setProducts(parsed.products);
-        if (parsed.selectedId) setSelectedId(parsed.selectedId);
-        if (parsed.csvText) setCsvText(parsed.csvText);
-        if (parsed.status) setStatus(parsed.status);
-        if (Array.isArray(parsed.optimizedIds)) setOptimizedIds(parsed.optimizedIds);
-        if (parsed.optimizationMeta) setOptimizationMeta(parsed.optimizationMeta);
-        if (parsed.query) setQuery(parsed.query);
-      }
-    } catch {
-      // A malformed local workspace should never stop the demo from loading.
-    } finally {
-      setWorkspaceReady(true);
-    }
+    let cancelled = false;
+    fetch("/api/workspace")
+      .then((response) => {
+        if (!response.ok) throw new Error(`Workspace request failed with status ${response.status}`);
+        return response.json() as Promise<{ workspace: WorkspaceState }>;
+      })
+      .then(({ workspace }) => {
+        if (cancelled) return;
+        if (workspace.products.length > 0) setProducts(workspace.products);
+        setSelectedId(workspace.selectedId);
+        setCsvText(workspace.csvText);
+        setStatus(workspace.status);
+        setOptimizedIds(workspace.optimizedIds);
+        setOptimizationMeta(workspace.optimizationMeta);
+        setQuery(workspace.query);
+      })
+      .catch((error) => {
+        if (!cancelled) setStatus(error instanceof Error ? `${error.message}. Using the local demo state.` : "Workspace request failed. Using the local demo state.");
+      })
+      .finally(() => {
+        if (!cancelled) setWorkspaceReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!workspaceReady) return;
-    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
-      products,
-      selectedId,
-      csvText,
-      status,
-      optimizedIds,
-      optimizationMeta,
-      query
-    }));
+    const timeout = window.setTimeout(() => {
+      fetch("/api/workspace", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ products, selectedId, csvText, status, optimizedIds, optimizationMeta, query })
+      }).catch(() => {
+        // The next state change retries the save; the UI remains usable offline.
+      });
+    }, 250);
+    return () => window.clearTimeout(timeout);
   }, [workspaceReady, products, selectedId, csvText, status, optimizedIds, optimizationMeta, query]);
 
   const summary = useMemo(() => summarizeCatalog(products), [products]);
@@ -106,23 +105,31 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   const selectedProduct = products.find((product) => product.id === selectedId) ?? products[0] ?? null;
   const weakestProduct = sortedProducts[0] ?? null;
 
-  function handleCsvImport() {
-    const rows = parseCatalogCsv(csvText);
-
-    if (rows.length === 0) {
+  async function handleCsvImport() {
+    if (!csvText.trim()) {
       setStatus("CSV import needs at least one valid row with name, price, and description.");
       return;
     }
 
-    startTransition(() => {
-      const imported = rows.map(createProductFromRow);
-      const weakestImported = [...imported].sort((left, right) => left.readinessScore - right.readinessScore)[0];
-      setProducts(imported);
-      setSelectedId(weakestImported?.id ?? imported[0]?.id ?? "");
-      setOptimizedIds([]);
-      setOptimizationMeta({});
-      setStatus(`Imported ${imported.length} products. The weakest SKU is selected for the next step.`);
-    });
+    setStatus("Importing catalog into the server workspace...");
+    try {
+      const response = await fetch("/api/catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: csvText })
+      });
+      const result = (await response.json()) as { workspace?: WorkspaceState; error?: string };
+      if (!response.ok || !result.workspace) throw new Error(result.error ?? "Catalog import failed.");
+      startTransition(() => {
+        setProducts(result.workspace!.products);
+        setSelectedId(result.workspace!.selectedId);
+        setOptimizedIds([]);
+        setOptimizationMeta({});
+        setStatus(result.workspace!.status);
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Catalog import failed unexpectedly.");
+    }
   }
 
   function handleLoadSample(csv: string, label: string) {
@@ -390,16 +397,42 @@ function ScoreBreakdown({ selectedProduct }: { selectedProduct: Product }) {
 
 function IntentQueryLab({ products, query, onQueryChange }: { products: Product[]; query: string; onQueryChange: (value: string) => void }) {
   const [submittedQuery, setSubmittedQuery] = useState(query);
-  const results = useMemo(() => rankProductsForQuery(products, submittedQuery, "improved"), [products, submittedQuery]);
-  const intent = useMemo(() => parseShoppingIntent(submittedQuery), [submittedQuery]);
-  const benchmark = useMemo(() => runBenchmark(products), [products]);
+  const [simulation, setSimulation] = useState<{ intent: ShoppingIntent; results: RankedRecommendation[]; benchmark: BenchmarkResult } | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const fallbackResults = useMemo(() => rankProductsForQuery(products, submittedQuery, "improved"), [products, submittedQuery]);
+  const intent = simulation?.intent ?? parseShoppingIntent(submittedQuery);
+  const results = simulation?.results ?? fallbackResults;
+  const benchmark = simulation?.benchmark ?? runBenchmark(products);
+
+  useEffect(() => setSimulation(null), [products]);
+
+  async function runSimulation(nextQuery: string) {
+    const trimmedQuery = nextQuery.trim();
+    if (!trimmedQuery) return;
+    setSubmittedQuery(trimmedQuery);
+    setIsSimulating(true);
+    try {
+      const response = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: trimmedQuery, mode: "improved" })
+      });
+      if (!response.ok) throw new Error("Server simulation unavailable");
+      const payload = (await response.json()) as { intent: ShoppingIntent; results: RankedRecommendation[]; benchmark: BenchmarkResult };
+      setSimulation(payload);
+    } catch {
+      setSimulation(null);
+    } finally {
+      setIsSimulating(false);
+    }
+  }
   const exampleQueries = [
     "I need a supportive option for a beginner under S$180.",
     "Find a comfortable choice for a humid daily routine.",
     "Show me a lightweight product for commuting under S$160."
   ];
 
-  return <section className="panel intent-lab"><div className="intent-lab-heading"><div><p className="eyebrow">Live intent simulation</p><h2>Ask the catalog like a shopper.</h2><p className="section-copy">Run one natural-language query across every SKU. AgentShelf extracts constraints, ranks the catalog, and explains the tradeoffs.</p></div><span className="demo-badge">Rules-based demo</span></div><div className="intent-form"><label htmlFor="intent-query">Shopper query</label><textarea id="intent-query" value={query} onChange={(event) => onQueryChange(event.target.value)} /><div className="intent-actions"><button className="primary-button" onClick={() => setSubmittedQuery(query)} type="button">Run recommendation simulation</button><div className="query-examples">{exampleQueries.map((example) => <button className="text-button" key={example} onClick={() => onQueryChange(example)} type="button">{example}</button>)}</div></div><div className="extracted-intent"><span>Extracted intent</span>{intent.category ? <strong>{intent.category}</strong> : null}{intent.budgetMax ? <strong>Budget ≤ S${intent.budgetMax}</strong> : null}{intent.signals.slice(0, 5).map((signal) => <strong key={signal}>{signal}</strong>)}</div></div><div className="benchmark-strip"><div><span>Offline benchmark</span><strong>{benchmark.strongMatchRate}% strong matches</strong></div><div><span>Scenario coverage</span><strong>{benchmark.queriesEvaluated} saved queries</strong></div><div><span>Top result average</span><strong>{benchmark.averageTopScore}/98</strong></div></div><div className="intent-results"><div className="intent-results-topline"><span>Ranked results</span><span>{results.length} products evaluated · based on structured profile signals</span></div>{results.slice(0, 3).map((result, index) => <RecommendationCard index={index} key={result.product.id} result={result} />)}<RecommendationComparison results={results.slice(0, 3)} /></div></section>;
+  return <section className="panel intent-lab"><div className="intent-lab-heading"><div><p className="eyebrow">Server-backed intent simulation</p><h2>Ask the catalog like a shopper.</h2><p className="section-copy">Run one natural-language query across every SKU. AgentShelf extracts constraints, ranks the catalog, and explains the tradeoffs.</p></div><span className="demo-badge">{simulation ? "API response" : "Rules-based fallback"}</span></div><div className="intent-form"><label htmlFor="intent-query">Shopper query</label><textarea id="intent-query" value={query} onChange={(event) => onQueryChange(event.target.value)} /><div className="intent-actions"><button className="primary-button" disabled={isSimulating} onClick={() => runSimulation(query)} type="button">{isSimulating ? "Running simulation..." : "Run recommendation simulation"}</button><div className="query-examples">{exampleQueries.map((example) => <button className="text-button" key={example} onClick={() => onQueryChange(example)} type="button">{example}</button>)}</div></div><div className="extracted-intent"><span>Extracted intent</span>{intent.category ? <strong>{intent.category}</strong> : null}{intent.budgetMax ? <strong>Budget ≤ S${intent.budgetMax}</strong> : null}{intent.signals.slice(0, 5).map((signal) => <strong key={signal}>{signal}</strong>)}</div></div><div className="benchmark-strip"><div><span>Offline benchmark</span><strong>{benchmark.strongMatchRate}% strong matches</strong></div><div><span>Scenario coverage</span><strong>{benchmark.queriesEvaluated} saved queries</strong></div><div><span>Top result average</span><strong>{benchmark.averageTopScore}/98</strong></div></div><div className="intent-results"><div className="intent-results-topline"><span>Ranked results</span><span>{results.length} products evaluated · based on structured profile signals</span></div>{results.slice(0, 3).map((result, index) => <RecommendationCard index={index} key={result.product.id} result={result} />)}<RecommendationComparison results={results.slice(0, 3)} /></div></section>;
 }
 
 function RecommendationCard({ index, result }: { index: number; result: RankedRecommendation }) {

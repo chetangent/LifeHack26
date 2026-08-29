@@ -29,6 +29,32 @@ export function StoryExperience({ product }: { product: Product }) {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const targets = Array.from(document.querySelectorAll<HTMLElement>(".scroll-hover-text"));
+    const timers = new Map<HTMLElement, number>();
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const target = entry.target as HTMLElement;
+        target.classList.remove("is-scroll-hovering");
+        void target.offsetWidth;
+        target.classList.add("is-scroll-hovering");
+        const previousTimer = timers.get(target);
+        if (previousTimer) window.clearTimeout(previousTimer);
+        timers.set(target, window.setTimeout(() => {
+          target.classList.remove("is-scroll-hovering");
+          timers.delete(target);
+        }, 900));
+      }),
+      { threshold: 0.35 }
+    );
+    targets.forEach((target) => observer.observe(target));
+    return () => {
+      observer.disconnect();
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
+
   function jumpTo(id: string) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
     setActiveStep(id);
@@ -55,7 +81,7 @@ export function StoryExperience({ product }: { product: Product }) {
       <section className="story-hero">
         <div className="story-hero-copy">
           <p className="eyebrow">The AI commerce layer</p>
-          <h1>Products deserve better answers.</h1>
+          <h1 className="scroll-hover-text">Products deserve better answers.</h1>
           <p>AgentShelf turns the static catalog into a living product story—structured for the way AI assistants actually help people shop.</p>
         </div>
         <button
@@ -87,7 +113,7 @@ export function StoryExperience({ product }: { product: Product }) {
           {steps.map((step) => (
             <section className="story-step" id={step.id} key={step.id}>
               <p className="eyebrow">{step.kicker}</p>
-              <h2>{step.title}</h2>
+              <h2 className="scroll-hover-text">{step.title}</h2>
               <p>{step.body}</p>
               {step.id === "prove" ? <Link className="primary-button link-button" href="/evidence">Open evidence lab <span>→</span></Link> : null}
             </section>
