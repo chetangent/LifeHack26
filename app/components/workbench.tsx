@@ -31,7 +31,10 @@ const sampleCatalogs = [
   { label: "Audio gear", csv: "name,price,description,features,category\nMetroQuiet Buds,S$149,Compact noise cancelling earbuds for daily commutes and travel,active noise cancellation|portable case|long battery,Audio gear\nOpenAir Go,S$99,Lightweight open earbuds for work calls and all-day listening,open fit|clear microphones|comfortable,Audio gear\nStudioArc Pro,S$249,Premium over-ear headphones for focused work and detailed listening,noise cancellation|rich sound|memory foam,Audio gear" }
 ] as const;
 
-const DEFAULT_QUERY = "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200.";
+const EXAMPLE_QUERY = "I'm training for a half marathon in Singapore's humid weather and need lightweight shoes under S$200.";
+const DEFAULT_QUERY = "";
+const EMPTY_CATALOG_STATUS = "No catalog loaded yet. Import a CSV to get started.";
+const SESSION_STARTED_KEY = "agentshelf-session-started";
 
 const workflowSteps = [
   { id: "catalog", label: "Import", href: "/catalog" },
@@ -46,19 +49,39 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   );
   const [products, setProducts] = useState(initialProducts);
   const [selectedId, setSelectedId] = useState(initialWeakestProduct?.id ?? "");
-  const [csvText, setCsvText] = useState(sampleCsv);
-  const [status, setStatus] = useState("Loaded demo running catalog.");
+  const [csvText, setCsvText] = useState("");
+  const [status, setStatus] = useState(EMPTY_CATALOG_STATUS);
   const [optimizedIds, setOptimizedIds] = useState<string[]>([]);
   const [optimizationMeta, setOptimizationMeta] = useState<Record<string, OptimizationMeta>>({});
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/workspace")
+    let isNewSession = false;
+    try {
+      isNewSession = window.sessionStorage.getItem(SESSION_STARTED_KEY) !== "true";
+    } catch {
+      // If browser storage is unavailable, keep the workspace usable without session tracking.
+    }
+
+    const workspaceRequest = isNewSession
+      ? fetch("/api/workspace", { method: "DELETE" })
+      : fetch("/api/workspace");
+
+    workspaceRequest
       .then((response) => {
         if (!response.ok) throw new Error(`Workspace request failed with status ${response.status}`);
+        if (isNewSession) {
+          try {
+            window.sessionStorage.setItem(SESSION_STARTED_KEY, "true");
+          } catch {
+            // Continue without session tracking if browser storage is unavailable.
+          }
+        }
         return response.json() as Promise<{ workspace: WorkspaceState }>;
       })
       .then(({ workspace }) => {
@@ -69,7 +92,7 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
         setStatus(workspace.status);
         setOptimizedIds(workspace.optimizedIds);
         setOptimizationMeta(workspace.optimizationMeta);
-        setQuery(workspace.query);
+        setQuery(workspace.query === EXAMPLE_QUERY ? DEFAULT_QUERY : workspace.query);
       })
       .catch((error) => {
         if (!cancelled) setStatus(error instanceof Error ? `${error.message}. Using the local demo state.` : "Workspace request failed. Using the local demo state.");
@@ -86,10 +109,19 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   useEffect(() => {
     if (!workspaceReady) return;
     const timeout = window.setTimeout(() => {
+      const workspaceUpdate: Partial<WorkspaceState> = {
+        selectedId,
+        csvText,
+        status,
+        optimizedIds,
+        optimizationMeta,
+        query
+      };
+      if (products.length > 0) workspaceUpdate.products = products;
       fetch("/api/workspace", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ products, selectedId, csvText, status, optimizedIds, optimizationMeta, query })
+        body: JSON.stringify(workspaceUpdate)
       }).catch(() => {
         // The next state change retries the save; the UI remains usable offline.
       });
@@ -135,6 +167,27 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
   function handleLoadSample(csv: string, label: string) {
     setCsvText(csv);
     setStatus(`${label} sample loaded. Import it to test cross-category recommendations.`);
+  }
+
+  async function handleClearCatalog() {
+    setIsClearing(true);
+    try {
+      const response = await fetch("/api/workspace", { method: "DELETE" });
+      const result = (await response.json()) as { workspace?: WorkspaceState; error?: string };
+      if (!response.ok || !result.workspace) throw new Error(result.error ?? "Catalog could not be cleared.");
+      setProducts([]);
+      setSelectedId("");
+      setCsvText("");
+      setOptimizedIds([]);
+      setOptimizationMeta({});
+      setQuery(DEFAULT_QUERY);
+      setStatus(result.workspace.status);
+      setShowClearConfirmation(false);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Catalog could not be cleared.");
+    } finally {
+      setIsClearing(false);
+    }
   }
 
   function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -190,13 +243,19 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
     setStatus(`Focused ${weakestProduct.name}, the weakest SKU in this catalog.`);
   }
 
-  if (!selectedProduct) return null;
+  if (!workspaceReady) {
+    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} /><LoadingWorkspaceState /></div>;
+  }
 
-  const baselinePrompts = simulatePrompts(selectedProduct, "baseline");
-  const improvedPrompts = simulatePrompts(selectedProduct, "improved");
-  const isOptimized = optimizedIds.includes(selectedProduct.id);
-  const suggestedFixes = recommendFixes(selectedProduct);
-  const scoreDelta = selectedProduct.improvedScore - selectedProduct.readinessScore;
+  if (!selectedProduct && view !== "catalog") {
+    return <div className={`workbench workbench-${view}`}><WorkflowSteps active={view} /><EmptyCatalogState view={view} /></div>;
+  }
+
+  const baselinePrompts = selectedProduct ? simulatePrompts(selectedProduct, "baseline") : [];
+  const improvedPrompts = selectedProduct ? simulatePrompts(selectedProduct, "improved") : [];
+  const isOptimized = selectedProduct ? optimizedIds.includes(selectedProduct.id) : false;
+  const suggestedFixes = selectedProduct ? recommendFixes(selectedProduct) : [];
+  const scoreDelta = selectedProduct ? selectedProduct.improvedScore - selectedProduct.readinessScore : 0;
   const simulatedWinDelta = improvedPrompts.filter((prompt) => prompt.matched).length - baselinePrompts.filter((prompt) => prompt.matched).length;
 
   return (
@@ -211,16 +270,20 @@ export function Workbench({ initialProducts, view }: WorkbenchProps) {
             handleFocusWeakest={handleFocusWeakest}
             onCsvChange={setCsvText}
             onLoadSample={handleLoadSample}
-            onResetCsv={() => setCsvText(sampleCsv)}
+            onResetCsv={() => setCsvText("")}
+            handleClearCatalog={handleClearCatalog}
+            isClearing={isClearing}
+            onCancelClear={() => setShowClearConfirmation(false)}
+            onRequestClear={() => setShowClearConfirmation(true)}
             onSelectProduct={setSelectedId}
             products={sortedProducts}
             selectedProduct={selectedProduct}
+            showClearConfirmation={showClearConfirmation}
             status={status}
             summary={summary}
             weakestProduct={weakestProduct}
           />
-          <IntentQueryLab products={products} query={query} onQueryChange={setQuery} />
-          <SolutionProof />
+          {products.length > 0 ? <><IntentQueryLab products={products} query={query} onQueryChange={setQuery} /><SolutionProof /></> : null}
         </>
       ) : view === "optimize" ? (
         <OptimizeView
@@ -272,23 +335,37 @@ function WorkflowSteps({ active }: { active: WorkbenchProps["view"] }) {
   );
 }
 
+function EmptyCatalogState({ view }: { view: "optimize" | "evidence" }) {
+  const isOptimize = view === "optimize";
+  return <section className="panel placeholder-state empty-workspace-state"><p className="eyebrow">Catalog required</p><h2>{isOptimize ? "Import a catalog before optimizing." : "Import a catalog before reviewing evidence."}</h2><p>{isOptimize ? "There are no products to improve yet. Add a CSV in Catalog setup, then return here to choose a SKU." : "There are no products to evaluate yet. Add a CSV in Catalog setup, then return here to test the evidence."}</p><Link className="primary-button link-button" href="/catalog">Go to catalog setup <span>→</span></Link></section>;
+}
+
+function LoadingWorkspaceState() {
+  return <section className="panel placeholder-state empty-workspace-state workspace-loading-state" aria-live="polite"><p className="eyebrow">Workspace</p><h2>Loading your catalog.</h2><p>Preparing the latest workspace before showing this step.</p><span className="workspace-loading-bar" aria-hidden="true" /></section>;
+}
+
 type CatalogViewProps = {
   csvText: string;
+  handleClearCatalog: () => void;
   handleCsvImport: () => void;
   handleFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   handleFocusWeakest: () => void;
+  isClearing: boolean;
   onCsvChange: (value: string) => void;
   onLoadSample: (csv: string, label: string) => void;
   onResetCsv: () => void;
+  onCancelClear: () => void;
+  onRequestClear: () => void;
   onSelectProduct: (id: string) => void;
   products: Product[];
-  selectedProduct: Product;
+  selectedProduct: Product | null;
+  showClearConfirmation: boolean;
   status: string;
   summary: ReturnType<typeof summarizeCatalog>;
   weakestProduct: Product | null;
 };
 
-function CatalogView({ csvText, handleCsvImport, handleFileUpload, handleFocusWeakest, onCsvChange, onLoadSample, onResetCsv, onSelectProduct, products, selectedProduct, status, summary, weakestProduct }: CatalogViewProps) {
+function CatalogView({ csvText, handleClearCatalog, handleCsvImport, handleFileUpload, handleFocusWeakest, isClearing, onCsvChange, onLoadSample, onResetCsv, onCancelClear, onRequestClear, onSelectProduct, products, selectedProduct, showClearConfirmation, status, summary, weakestProduct }: CatalogViewProps) {
   return (
     <>
       <section className="workspace-heading">
@@ -301,8 +378,9 @@ function CatalogView({ csvText, handleCsvImport, handleFileUpload, handleFocusWe
           <p className="eyebrow">Catalog input</p><h2>Upload a CSV</h2>
           <p className="section-copy">Use a file, or paste a small catalog manually if you are exploring the demo.</p>
           <label className="file-input"><span>Load CSV file</span><input type="file" accept=".csv,text/csv" onChange={handleFileUpload} /></label>
-          <details className="inline-details"><summary>Or paste CSV manually</summary><textarea className="csv-input" value={csvText} onChange={(event) => onCsvChange(event.target.value)} spellCheck={false} /><button className="ghost-button" onClick={onResetCsv} type="button">Reset sample</button></details>
-          <div className="action-row"><button className="primary-button" onClick={handleCsvImport} type="button">Import catalog</button></div>
+          <details className="inline-details"><summary>Or paste CSV manually</summary><textarea className="csv-input" value={csvText} onChange={(event) => onCsvChange(event.target.value)} placeholder="name,price,description,features\nExample product,S$99,Describe the product here,feature one|feature two" spellCheck={false} /><button className="ghost-button" onClick={onResetCsv} type="button">Clear CSV</button></details>
+          <div className="action-row"><button className="primary-button" onClick={handleCsvImport} type="button">Import catalog</button><button className="ghost-button clear-catalog-button" disabled={products.length === 0 || isClearing} onClick={onRequestClear} type="button">Clear catalog</button></div>
+          {showClearConfirmation ? <div className="clear-confirmation" role="dialog" aria-labelledby="clear-catalog-title" aria-modal="false"><strong id="clear-catalog-title">Clear this catalog?</strong><p>This will remove the imported products and reset Optimize and Evidence. You can import another catalog afterward.</p><div className="action-row"><button className="ghost-button" disabled={isClearing} onClick={onCancelClear} type="button">No, keep catalog</button><button className="danger-button" disabled={isClearing} onClick={handleClearCatalog} type="button">{isClearing ? "Clearing..." : "Yes, clear catalog"}</button></div></div> : null}
           <p className="status-note">{status}</p>
           <div className="sample-switcher">
             <div><span className="eyebrow">Generalisability check</span><p>Try the same workflow on another category.</p></div>
@@ -313,12 +391,11 @@ function CatalogView({ csvText, handleCsvImport, handleFileUpload, handleFocusWe
         <aside className="panel next-step-card">
           <p className="eyebrow">Next best action</p><h2>Start with the weakest SKU.</h2>
           <p className="section-copy">This product has the biggest content gap, making the improvement easiest to see.</p>
-          <div className="focus-product"><div><strong>{weakestProduct?.name}</strong><span>{weakestProduct?.price} · current score {weakestProduct?.readinessScore}</span></div><button className="ghost-button" onClick={handleFocusWeakest} type="button">Select</button></div>
-          <div className="mini-stat-grid"><div><span>Catalog average</span><strong>{summary.averageScore}</strong></div><div><span>Products ready</span><strong>{summary.highReadinessCount}</strong></div></div>
+          {weakestProduct ? <><div className="focus-product"><div><strong>{weakestProduct.name}</strong><span>{weakestProduct.price} · current score {weakestProduct.readinessScore}</span></div><button className="ghost-button" onClick={handleFocusWeakest} type="button">Select</button></div><div className="mini-stat-grid"><div><span>Catalog average</span><strong>{summary.averageScore}</strong></div><div><span>Products ready</span><strong>{summary.highReadinessCount}</strong></div></div></> : <div className="placeholder-state"><strong>No catalog imported yet.</strong><p>Import a CSV above to see the weakest SKU and catalog health here.</p></div>}
         </aside>
       </div>
 
-      <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct.id} />)}</div></details>
+      {products.length > 0 ? <details className="secondary-details compact-details"><summary>Choose another SKU <span>{products.length} products loaded</span></summary><div className="product-list">{products.map((product) => <ProductListItem key={product.id} onSelect={onSelectProduct} product={product} selected={product.id === selectedProduct?.id} />)}</div></details> : null}
     </>
   );
 }
@@ -432,7 +509,7 @@ function IntentQueryLab({ products, query, onQueryChange }: { products: Product[
     "Show me a lightweight product for commuting under S$160."
   ];
 
-  return <section className="panel intent-lab"><div className="intent-lab-heading"><div><p className="eyebrow">Server-backed intent simulation</p><h2>Ask the catalog like a shopper.</h2><p className="section-copy">Run one natural-language query across every SKU. AgentShelf extracts constraints, ranks the catalog, and explains the tradeoffs.</p></div><span className="demo-badge">{simulation ? "API response" : "Rules-based fallback"}</span></div><div className="intent-form"><label htmlFor="intent-query">Shopper query</label><textarea id="intent-query" value={query} onChange={(event) => onQueryChange(event.target.value)} /><div className="intent-actions"><button className="primary-button" disabled={isSimulating} onClick={() => runSimulation(query)} type="button">{isSimulating ? "Running simulation..." : "Run recommendation simulation"}</button><div className="query-examples">{exampleQueries.map((example) => <button className="text-button" key={example} onClick={() => onQueryChange(example)} type="button">{example}</button>)}</div></div><div className="extracted-intent"><span>Extracted intent</span>{intent.category ? <strong>{intent.category}</strong> : null}{intent.budgetMax ? <strong>Budget ≤ S${intent.budgetMax}</strong> : null}{intent.signals.slice(0, 5).map((signal) => <strong key={signal}>{signal}</strong>)}</div></div><div className="benchmark-strip"><div><span>Offline benchmark</span><strong>{benchmark.strongMatchRate}% strong matches</strong></div><div><span>Scenario coverage</span><strong>{benchmark.queriesEvaluated} saved queries</strong></div><div><span>Top result average</span><strong>{benchmark.averageTopScore}/98</strong></div></div><div className="intent-results"><div className="intent-results-topline"><span>Ranked results</span><span>{results.length} products evaluated · based on structured profile signals</span></div>{results.slice(0, 3).map((result, index) => <RecommendationCard index={index} key={result.product.id} result={result} />)}<RecommendationComparison results={results.slice(0, 3)} /></div></section>;
+  return <section className="panel intent-lab"><div className="intent-lab-heading"><div><p className="eyebrow">Server-backed intent simulation</p><h2>Ask the catalog like a shopper.</h2><p className="section-copy">Run one natural-language query across every SKU. AgentShelf extracts constraints, ranks the catalog, and explains the tradeoffs.</p></div><span className="demo-badge">{simulation ? "API response" : "Rules-based fallback"}</span></div><div className="intent-form"><label htmlFor="intent-query">Shopper query</label><textarea id="intent-query" placeholder={EXAMPLE_QUERY} value={query} onChange={(event) => onQueryChange(event.target.value)} /><div className="intent-actions"><button className="primary-button" disabled={isSimulating} onClick={() => runSimulation(query)} type="button">{isSimulating ? "Running simulation..." : "Run recommendation simulation"}</button><div className="query-examples">{exampleQueries.map((example) => <button className="text-button" key={example} onClick={() => onQueryChange(example)} type="button">{example}</button>)}</div></div><div className="extracted-intent"><span>Extracted intent</span>{intent.category ? <strong>{intent.category}</strong> : null}{intent.budgetMax ? <strong>Budget ≤ S${intent.budgetMax}</strong> : null}{intent.signals.slice(0, 5).map((signal) => <strong key={signal}>{signal}</strong>)}</div></div><div className="benchmark-strip"><div><span>Offline benchmark</span><strong>{benchmark.strongMatchRate}% strong matches</strong></div><div><span>Scenario coverage</span><strong>{benchmark.queriesEvaluated} saved queries</strong></div><div><span>Top result average</span><strong>{benchmark.averageTopScore}/98</strong></div></div><div className="intent-results"><div className="intent-results-topline"><span>Ranked results</span><span>{results.length} products evaluated · based on structured profile signals</span></div>{results.slice(0, 3).map((result, index) => <RecommendationCard index={index} key={result.product.id} result={result} />)}<RecommendationComparison results={results.slice(0, 3)} /></div></section>;
 }
 
 function RecommendationCard({ index, result }: { index: number; result: RankedRecommendation }) {
