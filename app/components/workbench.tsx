@@ -1,12 +1,13 @@
 "use client";
 
 import { ChangeEvent, startTransition, useMemo, useState } from "react";
-import type { Product } from "@/lib/types";
+import type { OptimizationMeta, Product } from "@/lib/types";
 import {
   createProductFromRow,
   exportProductPayload,
   parseCatalogCsv,
   scoreTone,
+  scoreWeights,
   simulatePrompts,
   summarizeCatalog
 } from "@/lib/scoring";
@@ -33,6 +34,8 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
   const [csvText, setCsvText] = useState(sampleCsv);
   const [status, setStatus] = useState("Loaded demo running catalog.");
   const [optimizedIds, setOptimizedIds] = useState<string[]>([]);
+  const [optimizationMeta, setOptimizationMeta] = useState<Record<string, OptimizationMeta>>({});
+  const [isOptimizing, setIsOptimizing] = useState(false);
 
   const summary = useMemo(() => summarizeCatalog(products), [products]);
   const sortedProducts = useMemo(
@@ -55,6 +58,7 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
     ? optimizedIds.includes(selectedProduct.id)
     : false;
   const suggestedFixes = selectedProduct ? recommendFixes(selectedProduct) : [];
+  const activeMeta = selectedProduct ? optimizationMeta[selectedProduct.id] : undefined;
 
   function handleCsvImport() {
     const rows = parseCatalogCsv(csvText);
@@ -109,19 +113,56 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
     setStatus(`Exported ${selectedProduct.name} as AI-ready JSON.`);
   }
 
-  function handleOptimizeSelected() {
+  async function handleOptimizeSelected() {
     if (!selectedProduct) {
       return;
     }
 
-    setOptimizedIds((current) =>
-      current.includes(selectedProduct.id)
-        ? current
-        : [...current, selectedProduct.id]
-    );
-    setStatus(
-      `Applied AgentShelf optimizations to ${selectedProduct.name}. Review the AI-ready profile and compare the simulation uplift.`
-    );
+    setIsOptimizing(true);
+    setStatus(`Optimizing ${selectedProduct.name} for AI recommendation...`);
+
+    try {
+      const response = await fetch("/api/enrich", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ product: selectedProduct })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Optimization failed with status ${response.status}`);
+      }
+
+      const result = (await response.json()) as {
+        product: Product;
+        meta: OptimizationMeta;
+      };
+
+      setProducts((current) =>
+        current.map((product) =>
+          product.id === selectedProduct.id ? result.product : product
+        )
+      );
+      setOptimizedIds((current) =>
+        current.includes(selectedProduct.id)
+          ? current
+          : [...current, selectedProduct.id]
+      );
+      setOptimizationMeta((current) => ({
+        ...current,
+        [selectedProduct.id]: result.meta
+      }));
+      setStatus(result.meta.explanation);
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Optimization failed unexpectedly."
+      );
+    } finally {
+      setIsOptimizing(false);
+    }
   }
 
   function handleFocusWeakest() {
@@ -216,8 +257,13 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
             product profile.
           </p>
           <div className="action-row">
-            <button className="primary-button" onClick={handleOptimizeSelected} type="button">
-              Apply suggested fixes
+            <button
+              className="primary-button"
+              disabled={isOptimizing}
+              onClick={handleOptimizeSelected}
+              type="button"
+            >
+              {isOptimizing ? "Optimizing..." : "Apply suggested fixes"}
             </button>
             <button className="ghost-button" onClick={handleExport} type="button">
               Export AI-ready JSON
@@ -236,6 +282,12 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
             </article>
           </div>
           <p className="status-note">{status}</p>
+          {activeMeta ? (
+            <p className="meta-note">
+              {activeMeta.provider === "openai" ? "Live OpenAI optimization" : "Fallback optimizer"}
+              {activeMeta.model ? ` • ${activeMeta.model}` : ""}
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -384,10 +436,11 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
               <div className="action-row">
                 <button
                   className="primary-button"
+                  disabled={isOptimizing}
                   onClick={handleOptimizeSelected}
                   type="button"
                 >
-                  Generate optimized profile
+                  {isOptimizing ? "Optimizing..." : "Generate optimized profile"}
                 </button>
               </div>
             </div>
@@ -428,6 +481,17 @@ export function Workbench({ initialProducts }: WorkbenchProps) {
               <p>{dimension.rationale}</p>
             </article>
           ))}
+        </div>
+        <div className="weights-panel">
+          <h3>How the score is calculated</h3>
+          <div className="weights-grid">
+            {scoreWeights.map((weight) => (
+              <div className="weight-row" key={weight.label}>
+                <span>{weight.label}</span>
+                <strong>{weight.weight}%</strong>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

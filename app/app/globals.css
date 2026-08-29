@@ -476,9 +476,23 @@ ul.clean {
   transform: translateY(-1px);
 }
 
+.primary-button:disabled,
+.ghost-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+}
+
 .status-note {
   margin: 14px 0 0;
   color: var(--muted);
+}
+
+.meta-note {
+  margin: 8px 0 0;
+  color: var(--accent);
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .weakest-card {
@@ -644,6 +658,36 @@ ul.clean {
   opacity: 0.72;
 }
 
+.weights-panel {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.weights-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.weight-row {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 251, 246, 0.9);
+}
+
+.weight-row span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+
+.weight-row strong {
+  font-size: 1.2rem;
+}
+
 @media (max-width: 920px) {
   .guidance-banner,
   .content-grid,
@@ -655,6 +699,7 @@ ul.clean {
   .score-overview,
   .metric-grid,
   .dimension-grid,
+  .weights-grid,
   .dual-list,
   .section-heading {
     grid-template-columns: 1fr;

@@ -60,3 +60,9 @@ export type ParsedCatalogRow = {
   description: string;
   features: string[];
 };
+
+export type OptimizationMeta = {
+  provider: "openai" | "fallback";
+  model?: string;
+  explanation: string;
+};

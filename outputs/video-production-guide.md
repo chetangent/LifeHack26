@@ -19,11 +19,12 @@ Because AI shopping assistants will not recommend products confidently unless th
 1. Open on the landing page and state the problem in one sentence.
 2. Show the weakest SKU and say why it fails.
 3. Show the missing recommendation signals.
-4. Click `Apply suggested fixes`.
-5. Show the AI-ready profile.
-6. Show the score uplift.
-7. Show the simulation before and after.
-8. End with the one-line pitch.
+4. Mention whether the app is using `Live OpenAI optimization` or `Fallback optimizer`.
+5. Click `Apply suggested fixes`.
+6. Show the AI-ready profile.
+7. Show the score uplift.
+8. Show the simulation before and after.
+9. End with the one-line pitch.
 
 ## Best on-screen sequence
 
@@ -53,6 +54,11 @@ Use this structure:
 - improved score
 - prompt wins before
 - prompt wins after
+- scoring weights if you have time for a quick trust-building moment
+
+## Recording recommendation for August 29, 2026 build
+
+For the strongest hackathon video, record with a real `OPENAI_API_KEY` enabled if possible. If network conditions are unstable, rehearse using the fallback optimizer and note that the app can switch to live model generation when credentials are available.
 
 ## Recording tips
 

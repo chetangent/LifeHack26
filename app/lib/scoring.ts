@@ -1,5 +1,7 @@
 import type {
   CatalogSummary,
+  EnrichedContent,
+  OptimizationMeta,
   ParsedCatalogRow,
   Product,
   RecommendationMode,
@@ -11,6 +13,14 @@ const promptLibrary = [
   "I'm training for my first half marathon and need breathable daily trainers.",
   "What's the best value neutral shoe for hot climates?"
 ];
+
+export const scoreWeights = [
+  { label: "Completeness", weight: 30 },
+  { label: "Context", weight: 25 },
+  { label: "Persona Fit", weight: 20 },
+  { label: "Trust Signals", weight: 15 },
+  { label: "Recommendation Clarity", weight: 10 }
+] as const;
 
 export function buildProductInsight(product: Product) {
   return {
@@ -243,6 +253,75 @@ export function createProductFromRow(row: ParsedCatalogRow, index: number): Prod
   };
 }
 
+export function buildFallbackProductFromProduct(product: Product): Product {
+  const derived = createProductFromRow(
+    {
+      name: product.name,
+      price: product.price,
+      description: product.rawDescription,
+      features: product.rawBullets
+    },
+    0
+  );
+
+  const fallbackEnriched =
+    product.enriched.personas.length > 0 ? product.enriched : derived.enriched;
+
+  return applyEnrichmentToProduct(
+    {
+      ...product,
+      climate: product.climate || derived.climate,
+      fit: product.fit || derived.fit,
+      cushioning: product.cushioning || derived.cushioning,
+      sourceSignals:
+        product.sourceSignals.length > 0 ? product.sourceSignals : derived.sourceSignals,
+      gaps: product.gaps.length > 0 ? product.gaps : derived.gaps,
+      readinessScore: product.readinessScore || derived.readinessScore
+    },
+    fallbackEnriched
+  );
+}
+
+export function applyEnrichmentToProduct(
+  product: Product,
+  enriched: EnrichedContent
+): Product {
+  const scoreBreakdown = buildScoreBreakdown(product, enriched);
+  const improvedScore = calculateWeightedScore(scoreBreakdown);
+
+  return {
+    ...product,
+    improvedScore,
+    scoreBreakdown,
+    enriched
+  };
+}
+
+export function normalizeEnrichment(raw: Partial<EnrichedContent>, product: Product): EnrichedContent {
+  return {
+    aiSummary: raw.aiSummary?.trim() || product.enriched.aiSummary,
+    personas: sanitizeList(raw.personas, product.enriched.personas),
+    useCases: sanitizeList(raw.useCases, product.enriched.useCases),
+    strengths: sanitizeList(raw.strengths, product.enriched.strengths),
+    tradeoffs: sanitizeList(raw.tradeoffs, product.enriched.tradeoffs),
+    proofPoints: sanitizeList(raw.proofPoints, product.enriched.proofPoints),
+    machineTags: sanitizeList(raw.machineTags, product.enriched.machineTags),
+    recommendationReasons: sanitizeList(
+      raw.recommendationReasons,
+      product.enriched.recommendationReasons
+    ),
+    missingSignals: sanitizeList(raw.missingSignals, product.gaps)
+  };
+}
+
+export function buildOptimizationMeta(
+  provider: OptimizationMeta["provider"],
+  explanation: string,
+  model?: string
+): OptimizationMeta {
+  return { provider, explanation, model };
+}
+
 function derivePersonas(description: string, fit: string, priceValue: number) {
   const personas = [];
 
@@ -267,6 +346,108 @@ function derivePersonas(description: string, fit: string, priceValue: number) {
   }
 
   return unique(personas.length > 0 ? personas : ["daily trainer buyer", "value shopper"]);
+}
+
+function buildScoreBreakdown(
+  product: Product,
+  enriched: EnrichedContent
+): {
+  label: (typeof scoreWeights)[number]["label"];
+  baseline: number;
+  improved: number;
+  rationale: string;
+}[] {
+  const gapPenalty = enriched.missingSignals.length * 4;
+  const completenessImproved = clamp(
+    48 + product.rawBullets.length * 6 + enriched.machineTags.length * 4 - gapPenalty,
+    45,
+    96
+  );
+  const contextImproved = clamp(
+    44 +
+      enriched.useCases.length * 9 +
+      (enriched.aiSummary.toLowerCase().includes(product.climate) ? 8 : 0) -
+      gapPenalty,
+    42,
+    96
+  );
+  const personaImproved = clamp(
+    46 + enriched.personas.length * 11 - Math.max(0, enriched.missingSignals.length - 1) * 4,
+    45,
+    96
+  );
+  const trustImproved = clamp(
+    42 + enriched.proofPoints.length * 12 - gapPenalty,
+    38,
+    94
+  );
+  const clarityImproved = clamp(
+    50 + enriched.recommendationReasons.length * 10 + enriched.tradeoffs.length * 5 - gapPenalty,
+    45,
+    96
+  );
+
+  return [
+    {
+      label: "Completeness",
+      baseline: clamp(product.readinessScore - 8, 40, 90),
+      improved: completenessImproved,
+      rationale:
+        "Measures whether the product exposes enough machine-readable facts, attributes, and decision signals."
+    },
+    {
+      label: "Context",
+      baseline: clamp(product.readinessScore - 4, 42, 90),
+      improved: contextImproved,
+      rationale:
+        "Rewards concrete shopper context such as climate, goals, budget, and use-case fit."
+    },
+    {
+      label: "Persona Fit",
+      baseline: clamp(product.readinessScore - 5, 40, 90),
+      improved: personaImproved,
+      rationale:
+        "Checks whether an AI assistant can tell who this product is best for and when not to recommend it."
+    },
+    {
+      label: "Trust Signals",
+      baseline: clamp(product.readinessScore - 10, 35, 86),
+      improved: trustImproved,
+      rationale:
+        "Improves when claims are supported by proof points instead of only marketing language."
+    },
+    {
+      label: "Recommendation Clarity",
+      baseline: clamp(product.readinessScore - 6, 38, 90),
+      improved: clarityImproved,
+      rationale:
+        "Captures how clearly the listing explains why this SKU wins, plus key tradeoffs and guardrails."
+    }
+  ];
+}
+
+function calculateWeightedScore(
+  dimensions: { label: (typeof scoreWeights)[number]["label"]; improved: number }[]
+) {
+  const weightByLabel = new Map(scoreWeights.map((item) => [item.label, item.weight]));
+  const weightedTotal = dimensions.reduce((total, dimension) => {
+    const weight = weightByLabel.get(dimension.label) ?? 0;
+    return total + dimension.improved * weight;
+  }, 0);
+
+  return clamp(Math.round(weightedTotal / 100), 55, 96);
+}
+
+function sanitizeList(values: string[] | undefined, fallback: string[]) {
+  if (!values || values.length === 0) {
+    return fallback;
+  }
+
+  return unique(
+    values
+      .map((value) => value.trim())
+      .filter(Boolean)
+  ).slice(0, 6);
 }
 
 function deriveUseCases(description: string, climate: string) {
