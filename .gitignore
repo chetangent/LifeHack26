@@ -1,0 +1,6 @@
+.DS_Store
+.npm-cache
+work/.npm-cache
+app/node_modules
+app/.next
+app/tsconfig.tsbuildinfo

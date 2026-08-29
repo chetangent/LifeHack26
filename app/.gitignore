@@ -1,0 +1,6 @@
+.next
+node_modules
+*.log
+dist
+coverage
+.DS_Store
