@@ -237,19 +237,6 @@ body {
   margin: 14px 0 0;
 }
 
-.workspace-count {
-  flex: 0 0 auto;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  background: rgba(255, 250, 243, 0.68);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .focus-grid,
 .optimization-grid,
 .evidence-summary-main,
@@ -1946,7 +1933,6 @@ ul.clean {
   .catalog-card-heading > span { margin-top: -4px; }
   .workspace-heading { align-items: flex-start; flex-direction: column; }
   .workspace-heading h2 { max-width: 11ch; }
-  .workspace-count { align-self: flex-start; }
   .selected-product-bar { position: static; flex-direction: column; }
   .score-pair { width: 100%; justify-content: space-between; }
   .focus-product { align-items: flex-start; flex-direction: column; }
