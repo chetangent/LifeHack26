@@ -189,10 +189,7 @@ outputs/
 - [Solution concept](./outputs/ai-commerce-solution-concept.md)
 - [Pitch deck outline](./outputs/pitch-deck-outline.md)
 - [PRD / MVP spec](./outputs/prd-mvp-spec.md)
-- [Demo narrative](./outputs/demo-narrative.md)
-- [Winning build plan](./outputs/winning-build-plan.md)
-- [Video script](./outputs/video-script.md)
-- [Video production guide](./outputs/video-production-guide.md)
+
 
 ## What is real vs demo right now
 
